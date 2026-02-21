@@ -116,6 +116,17 @@ The `MigrationOptions` class accepts the following parameters:
 ### 1. Implement the `Migratable` mixin
 
 Apply the `Migratable` mixin to your database class and implement the required members:
+- [migrationOptions] – Configuration for migration behavior
+- [queryVersion] – Retrieve the current database version and checksum
+- [transaction] – Execute operations within a database transaction
+- [execute] – Execute a command or statement against the database
+
+Optionally, and highly recommended for databases supporting transactions, also override:
+- [isRetryable] – Determine if an error should trigger a retry
+- [acquireLock] – Acquire a migration lock for clustered environments
+- [releaseLock] – Release the migration lock
+
+Example:
 
 ```dart
 import 'dart:io';
