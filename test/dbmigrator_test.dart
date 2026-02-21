@@ -44,7 +44,7 @@ void main() {
   group('File-based migration version checks', () {
     final db = DummyDb(
       currentVersion: '',
-      migrationsOptions: MigrationOptions(path: './test/migrations/file-based', checksums: false),
+      migrationOptions: MigrationOptions(path: './test/migrations/file-based', checksums: false),
     );
 
     test('Empty current version returns all migration upgrades found', () async {
@@ -109,7 +109,7 @@ void main() {
   group('File-based migration file checks', () {
     final db = DummyDb(
       currentVersion: '',
-      migrationsOptions: MigrationOptions(path: './test/migrations/file-based', checksums: true),
+      migrationOptions: MigrationOptions(path: './test/migrations/file-based', checksums: true),
     );
 
     test('Empty current version returns all migration upgrades found', () async {
@@ -137,7 +137,7 @@ void main() {
   group('Directory-based migration version checks', () {
     final db = DummyDb(
       currentVersion: '',
-      migrationsOptions: MigrationOptions(path: './test/migrations/dir-based', directoryBased: true, checksums: false),
+      migrationOptions: MigrationOptions(path: './test/migrations/dir-based', directoryBased: true, checksums: false),
     );
 
     // Same as file-based version tests
@@ -204,7 +204,7 @@ void main() {
   group('Directory-based migration file checks', () {
     final db = DummyDb(
       currentVersion: '',
-      migrationsOptions: MigrationOptions(path: './test/migrations/dir-based', directoryBased: true, checksums: true),
+      migrationOptions: MigrationOptions(path: './test/migrations/dir-based', directoryBased: true, checksums: true),
     );
 
     test('Empty current version returns all migration upgrades found', () async {
@@ -230,7 +230,7 @@ void main() {
   group('File-based migrations execution', () {
     final db = DummyDb(
       currentVersion: '1.1.1',
-      migrationsOptions: MigrationOptions(path: './test/migrations/file-based', checksums: false),
+      migrationOptions: MigrationOptions(path: './test/migrations/file-based', checksums: false),
     );
 
     test('Executes the correct upgrade migration files', () async {
@@ -255,7 +255,7 @@ void main() {
   group('Directory-based migrations execution', () {
     final db = DummyDb(
       currentVersion: '1.1.1',
-      migrationsOptions: MigrationOptions(path: './test/migrations/dir-based', directoryBased: true, checksums: false),
+      migrationOptions: MigrationOptions(path: './test/migrations/dir-based', directoryBased: true, checksums: false),
     );
 
     test('Executes the correct upgrade migration files', () async {
@@ -284,7 +284,7 @@ void main() {
     test('Migrating to the same version with checksums disabled returns successfully with empty migrations', () async {
       final db = DummyDb(
         currentVersion: '1.1.1',
-        migrationsOptions: MigrationOptions(path: './test/migrations/file-based', checksums: false),
+        migrationOptions: MigrationOptions(path: './test/migrations/file-based', checksums: false),
       );
 
       final res = await db.migrate(version: '1.1.1');
@@ -295,7 +295,7 @@ void main() {
       final db = DummyDb(
         currentVersion: '1.1.1',
         currentChecksum: v111Checksum,
-        migrationsOptions: MigrationOptions(path: './test/migrations/file-based', checksums: true),
+        migrationOptions: MigrationOptions(path: './test/migrations/file-based', checksums: true),
       );
 
       final res = await db.migrate(version: '1.1.1');
@@ -308,7 +308,7 @@ void main() {
         final db = DummyDb(
           currentVersion: '1.1.1',
           currentChecksum: 'invalid',
-          migrationsOptions: MigrationOptions(path: './test/migrations/file-based', checksums: true),
+          migrationOptions: MigrationOptions(path: './test/migrations/file-based', checksums: true),
         );
 
         expect(() async => await db.migrate(version: '1.1.1'), throwsA(isA<MigrationChecksumMismatchError>()));
@@ -318,20 +318,20 @@ void main() {
 }
 
 class DummyDb with Migratable {
-  const DummyDb({required this.currentVersion, required this.migrationsOptions, this.currentChecksum = ''});
+  const DummyDb({required this.currentVersion, required this.migrationOptions, this.currentChecksum = ''});
 
   final String currentVersion;
   final String currentChecksum;
 
   @override
-  final MigrationOptions migrationsOptions;
+  final MigrationOptions migrationOptions;
 
   @override
   Future<({String version, String checksum})> queryVersion() async =>
       (version: currentVersion, checksum: currentChecksum);
 
   @override
-  Future<void> execute(String file, {ctx}) async {
+  Future<dynamic> execute(Object stmt, {ctx}) async {
     // do nothing
   }
 

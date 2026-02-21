@@ -3,18 +3,23 @@ import 'dart:io';
 import 'package:dbmigrator_base/dbmigrator_base.dart';
 
 class MyDatabase with Migratable {
-  MyDatabase({required this.migrationsOptions});
+  MyDatabase({required this.migrationOptions});
 
   // Some database connection pool your app or package uses
   // Needs to be instantiated somewhere beforehand
   final Pool? _pool;
 
   @override
-  final MigrationOptions migrationsOptions;
+  final MigrationOptions migrationOptions;
 
   @override
   Future<void> acquireLock() async {
     // Acquire a migration lock
+  }
+
+  @override
+  Future<dynamic> execute(Object stmt, {dynamic ctx}) async {
+    // Execute the statement or query against the database
   }
 
   @override
@@ -38,12 +43,5 @@ class MyDatabase with Migratable {
   Future<void> transaction(Future<void> Function(dynamic ctx) fn) async {
     // Create transaction context, then execute the fn inside it and wait for completion
     await _pool.runTx(fn);
-  }
-
-  @override
-  Future<void> execute(String file, {ctx}) async {
-    // Read file's SQL statement contents and execute them
-    final sql = await File('${migrationsOptions.path}/$file').readAsString();
-    await ctx.execute(sql);
   }
 }

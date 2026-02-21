@@ -58,10 +58,15 @@ typedef MigrationResult = ({
 ///
 /// **Implementation Requirements:**
 /// Classes using this mixin must implement:
-/// - [migrationsOptions] - Configuration for migration behavior
+/// - [migrationOptions] - Configuration for migration behavior
 /// - [queryVersion] - Retrieve current database version and checksum
 /// - [transaction] - Execute operations within a database transaction
-/// - [execute] - Execute a single migration file
+/// - [execute] - Execute a command or statement against the database
+///
+/// Classes using this mixin can optionally override:
+/// - [isRetryable] - Determine if an error should trigger a retry
+/// - [acquireLock] - Acquire a migration lock for clustered environments
+/// - [releaseLock] - Release the migration lock
 ///
 /// **Example:**
 /// ```dart
@@ -114,9 +119,17 @@ mixin Migratable {
   static const minVersion = '0.0.1-alpha+0';
 
   /// Gets the configuration options for database migrations.
-  MigrationOptions get migrationsOptions;
+  MigrationOptions get migrationOptions;
 
-  // region Querying methods
+  // region Overridable methods
+  /// Whether the given error is transient and the migration should be retried.
+  ///
+  /// Implementors should return `true` for recoverable errors such as
+  /// connection failures, lock timeouts, and deadlocks.
+  ///
+  /// Defaults to `false` (no retry).
+  bool isRetryable(Object error) => false;
+
   /// Queries and returns the current database version and checksum.
   ///
   /// Returns a version/checksum strings record representing the current version
@@ -125,157 +138,19 @@ mixin Migratable {
   /// Returns a record of empty strings if no version has been set.
   Future<({String version, String checksum})?> queryVersion();
 
-  /// Returns a list of available migration versions found in the migrations directory
-  /// that are older or newer than the provided [targetVersions], along with each version's checksum (if enabled).
+  /// Executes a command or statement within a transaction context.
   ///
-  /// [targetVersions] - The target version to check migrations from
-  /// [upgradable] - If true, will return versions that are older than the target version (upgradable);
-  ///   otherwise will return versions that are newer (downgradable) than the target version.
+  /// Implementors should execute the provided statement against the database.
   ///
-  /// Returns a list of available migration versions and their checksums (if enabled),
-  /// sorted either from oldest to newest (upgradable) or newest to oldest (downgradable), empty if none found.
-  Future<List<({String name, String checksum})>> queryMigrationVersions(
-    String targetVersions, {
-    ({String version, String checksum})? current,
-    bool upgradable = true,
-  }) async {
-    final versions = (await queryMigrationFiles(targetVersions, current: current, upgradable: upgradable));
-
-    return versions.keys.map((v) => (name: v, checksum: versions[v]!.checksum())).toList();
-  }
-
-  /// Returns a list of available migrations found in the migrations directory
-  /// that are newer or older than the provided [targetVersion].
+  /// **Parameters:**
+  /// - [sql] - The SQL command string to execute
+  /// - [ctx] - Optional transaction context
   ///
-  /// - [targetVersion] - The target version to check upgrades from
-  /// - [upgradable] - If true, will return migration files that are older than the target version (upgradable);
-  ///   otherwise will return migration versions that are newer (downgradable) than the target version.
-  ///
-  /// Returns a map of available migration files with the key containing their version, empty if none found.
-  /// Keys (versions) are sorted either from oldest to newest (upgradable) or newest to oldest (downgradable).
-  Future<Map<String, List<({String name, String checksum})>>> queryMigrationFiles(
-    String targetVersion, {
-    ({String version, String checksum})? current,
-    bool upgradable = true,
-  }) async {
-    // Check if migrations directory exists
-    final dir = Directory(migrationsOptions.path);
-    if (!await dir.exists()) return {};
+  /// **Throws:**
+  /// May throw database-specific exceptions on execution failure.
+  Future<dynamic> execute(Object cmd, {dynamic ctx});
 
-    // Check if target version is valid
-    late final Version? currVer;
-    late final Version targVer;
-
-    current = current ?? await queryVersion();
-    try {
-      currVer = (current?.version ?? '').isNotEmpty ? Version.parse(current!.version) : null;
-    } catch (_) {
-      throw MigrationInvalidVersionError(
-        message: 'Current version "${current!.version}" has not a valid version format.',
-      );
-    }
-    try {
-      targVer = targetVersion.isNotEmpty ? Version.parse(targetVersion) : Version.parse('-1');
-    } catch (_) {
-      throw MigrationInvalidVersionError(message: 'Target version "$targetVersion" has not a valid version format.');
-    }
-
-    if (upgradable) {
-      // Return empty if current already newer than target
-      if (currVer != null && targVer <= currVer) return {};
-    } else {
-      // Return empty if current already older than target
-      if (currVer == null || targVer >= currVer) return {};
-    }
-
-    final versions = <Version, List<({String name, String checksum})>>{};
-
-    // Iterate through all files/dirs in the migrations directory
-    if (migrationsOptions.directoryBased) {
-      await for (final file in dir.list()) {
-        // We're only looking for versioned directories; ignore files
-        if (file is! Directory) continue;
-        final versionStr = file.path.split('/').last;
-
-        try {
-          final ver = Version.parse(versionStr);
-          if (upgradable) {
-            // Not interested in versions older than the current, neither newer than the target
-            if ((currVer != null && ver <= currVer) || ver > targVer) continue;
-          } else {
-            // Not interested in versions newer than the current, neither older than the target
-            if (currVer == null || ver >= currVer || ver < targVer) continue;
-          }
-
-          final files = <({String name, String checksum})>[];
-
-          await for (final item in file.list()) {
-            // We're only looking for files; ignore directories
-            if (item is! File) continue;
-            final name = item.path.split('/').last;
-
-            // Check file's name and extract its version info
-            final match = migrationsOptions.regex.firstMatch(name);
-            if (match == null) continue;
-
-            String checksum = '';
-            if (migrationsOptions.checksums) {
-              checksum = sha256.convert(await item.readAsBytes()).toString();
-            }
-
-            files.add((name: name, checksum: checksum));
-          }
-
-          versions[ver] = (versions[ver] ?? [])
-            ..addAll(files)
-            ..sort((a, b) => a.name.compareTo(b.name));
-        } catch (_) {}
-      }
-    } else {
-      await for (final file in dir.list()) {
-        // We're only looking for files; ignore directories
-        if (file is! File) continue;
-        final name = file.path.split('/').last;
-
-        // Check file's name and extract its version info
-        final match = migrationsOptions.regex.firstMatch(name);
-        if (match == null) continue;
-
-        final versionStr = match.namedGroup('version');
-        if (versionStr == null) continue;
-
-        try {
-          final ver = Version.parse(versionStr);
-          if (upgradable) {
-            // Not interested in versions older than the current, neither newer than the target
-            if ((currVer != null && ver <= currVer) || ver > targVer) continue;
-          } else {
-            // Not interested in versions newer than the current, neither older than the target
-            if (currVer == null || ver >= currVer || ver < targVer) continue;
-          }
-
-          String checksum = '';
-          if (migrationsOptions.checksums) {
-            checksum = sha256.convert(await file.readAsBytes()).toString();
-          }
-
-          versions[ver] = (versions[ver] ?? [])
-            ..add((name: name, checksum: checksum))
-            ..sort((a, b) => a.name.compareTo(b.name));
-        } catch (_) {}
-      }
-    }
-
-    final sortFn = (upgradable) ? (a, b) => a.compareTo(b) : (a, b) => b.compareTo(a);
-
-    // Return properly sorted map entries
-    return Map.fromEntries(
-      (versions.entries.toList()..sort((a, b) => sortFn(a.key, b.key))).map((e) => MapEntry(e.key.toString(), e.value)),
-    );
-  }
-  // endregion
-
-  // region Migration execution methods
+  // region Locking/transaction methods
   /// Acquires a migration lock to prevent concurrent migration execution
   /// in clustered environments.
   ///
@@ -314,18 +189,161 @@ mixin Migratable {
   /// transaction operations.
   /// ```
   Future<void> transaction(Future<void> Function(dynamic ctx) fn);
+  // endregion
+  // endregion
 
-  /// Executes a migration file within the context of a database transaction.
+  // region Migration directory querying methods
+  /// Returns a list of available migration versions found in the migrations directory
+  /// that are older or newer than the provided [targetVersions], along with each version's checksum (if enabled).
   ///
-  /// **Parameters:**
-  /// - [file] - The path or name of the migration file to execute
-  /// - [ctx] - Optional transaction context
+  /// [targetVersions] - The target version to check migrations from
+  /// [upgradable] - If true, will return versions that are older than the target version (upgradable);
+  ///   otherwise will return versions that are newer (downgradable) than the target version.
   ///
-  /// **Throws:**
-  /// May throw exceptions if the migration file cannot be executed or contains
-  /// invalid SQL statements.
-  Future<void> execute(String file, {dynamic ctx});
+  /// Returns a list of available migration versions and their checksums (if enabled),
+  /// sorted either from oldest to newest (upgradable) or newest to oldest (downgradable), empty if none found.
+  Future<List<({String name, String checksum})>> queryMigrationVersions(
+    String targetVersions, {
+    ({String version, String checksum})? current,
+    bool upgradable = true,
+  }) async {
+    final versions = (await queryMigrationFiles(targetVersions, current: current, upgradable: upgradable));
 
+    return versions.keys.map((v) => (name: v, checksum: versions[v]!.checksum())).toList();
+  }
+
+  /// Returns a list of available migrations found in the migrations directory
+  /// that are newer or older than the provided [targetVersion].
+  ///
+  /// - [targetVersion] - The target version to check upgrades from
+  /// - [upgradable] - If true, will return migration files that are older than the target version (upgradable);
+  ///   otherwise will return migration versions that are newer (downgradable) than the target version.
+  ///
+  /// Returns a map of available migration files with the key containing their version, empty if none found.
+  /// Keys (versions) are sorted either from oldest to newest (upgradable) or newest to oldest (downgradable).
+  Future<Map<String, List<({String name, String checksum})>>> queryMigrationFiles(
+    String targetVersion, {
+    ({String version, String checksum})? current,
+    bool upgradable = true,
+  }) async {
+    // Check if migrations directory exists
+    final dir = Directory(migrationOptions.path);
+    if (!await dir.exists()) return {};
+
+    // Check if target version is valid
+    late final Version? currVer;
+    late final Version targVer;
+
+    current = current ?? await _retry(() => queryVersion());
+    try {
+      currVer = (current?.version ?? '').isNotEmpty ? Version.parse(current!.version) : null;
+    } catch (_) {
+      throw MigrationInvalidVersionError(
+        message: 'Current version "${current!.version}" has not a valid version format.',
+      );
+    }
+    try {
+      targVer = targetVersion.isNotEmpty ? Version.parse(targetVersion) : Version.parse('-1');
+    } catch (_) {
+      throw MigrationInvalidVersionError(message: 'Target version "$targetVersion" has not a valid version format.');
+    }
+
+    if (upgradable) {
+      // Return empty if current already newer than target
+      if (currVer != null && targVer <= currVer) return {};
+    } else {
+      // Return empty if current already older than target
+      if (currVer == null || targVer >= currVer) return {};
+    }
+
+    final versions = <Version, List<({String name, String checksum})>>{};
+
+    // Iterate through all files/dirs in the migrations directory
+    if (migrationOptions.directoryBased) {
+      await for (final file in dir.list()) {
+        // We're only looking for versioned directories; ignore files
+        if (file is! Directory) continue;
+        final versionStr = file.path.split('/').last;
+
+        try {
+          final ver = Version.parse(versionStr);
+          if (upgradable) {
+            // Not interested in versions older than the current, neither newer than the target
+            if ((currVer != null && ver <= currVer) || ver > targVer) continue;
+          } else {
+            // Not interested in versions newer than the current, neither older than the target
+            if (currVer == null || ver >= currVer || ver < targVer) continue;
+          }
+
+          final files = <({String name, String checksum})>[];
+
+          await for (final item in file.list()) {
+            // We're only looking for files; ignore directories
+            if (item is! File) continue;
+            final name = item.path.split('/').last;
+
+            // Check file's name and extract its version info
+            final match = migrationOptions.regex.firstMatch(name);
+            if (match == null) continue;
+
+            String checksum = '';
+            if (migrationOptions.checksums) {
+              checksum = sha256.convert(await item.readAsBytes()).toString();
+            }
+
+            files.add((name: name, checksum: checksum));
+          }
+
+          versions[ver] = (versions[ver] ?? [])
+            ..addAll(files)
+            ..sort((a, b) => a.name.compareTo(b.name));
+        } catch (_) {}
+      }
+    } else {
+      await for (final file in dir.list()) {
+        // We're only looking for files; ignore directories
+        if (file is! File) continue;
+        final name = file.path.split('/').last;
+
+        // Check file's name and extract its version info
+        final match = migrationOptions.regex.firstMatch(name);
+        if (match == null) continue;
+
+        final versionStr = match.namedGroup('version');
+        if (versionStr == null) continue;
+
+        try {
+          final ver = Version.parse(versionStr);
+          if (upgradable) {
+            // Not interested in versions older than the current, neither newer than the target
+            if ((currVer != null && ver <= currVer) || ver > targVer) continue;
+          } else {
+            // Not interested in versions newer than the current, neither older than the target
+            if (currVer == null || ver >= currVer || ver < targVer) continue;
+          }
+
+          String checksum = '';
+          if (migrationOptions.checksums) {
+            checksum = sha256.convert(await file.readAsBytes()).toString();
+          }
+
+          versions[ver] = (versions[ver] ?? [])
+            ..add((name: name, checksum: checksum))
+            ..sort((a, b) => a.name.compareTo(b.name));
+        } catch (_) {}
+      }
+    }
+
+    final sortFn = (upgradable) ? (a, b) => a.compareTo(b) : (a, b) => b.compareTo(a);
+
+    // Return properly sorted map entries
+    return Map.fromEntries(
+      (versions.entries.toList()..sort((a, b) => sortFn(a.key, b.key))).map((e) => MapEntry(e.key.toString(), e.value)),
+    );
+  }
+  // endregion
+
+  // region Migration execution methods
   /// Performs database migration to the specified target version.
   ///
   /// This method handles both upgrade (migrating to a newer version) and downgrade
@@ -355,6 +373,8 @@ mixin Migratable {
   /// - Automatically rolls back on failure and throws [MigrationError]
   /// - Releases the lock acquired when starting the migration process
   /// - Returns early if no migration files are found
+  /// - Retries command executions as dictated by the [MigrationOptions.retries] and
+  ///   [MigrationOptions.retryDelay] options
   ///
   /// **Throws:**
   /// - [MigrationInvalidVersionError] if current or target version format is invalid
@@ -370,16 +390,18 @@ mixin Migratable {
     ({String version, String checksum})? current,
     dynamic ctx,
   }) async {
-    await acquireLock();
+    await _retry(() => acquireLock());
     try {
       return await _migrate(version: version, current: current, ctx: ctx);
     } finally {
       try {
-        await releaseLock();
+        await _retry(() => releaseLock());
       } catch (_) {}
     }
   }
+  // endregion
 
+  // region Internal methods
   Future<MigrationResult> _migrate({
     required String version,
     ({String version, String checksum})? current,
@@ -389,7 +411,7 @@ mixin Migratable {
     late final Version targVer;
 
     // region Identify migration's direction and versions
-    current = current ?? await queryVersion();
+    current = current ?? await _retry(() => queryVersion());
     if ((current?.version ?? '').isNotEmpty) {
       try {
         currVer = Version.parse(current!.version);
@@ -415,7 +437,7 @@ mixin Migratable {
     } else if (currVer > targVer) {
       files = await queryMigrationFiles(version, current: current, upgradable: false);
     } else {
-      if (migrationsOptions.checksums) {
+      if (migrationOptions.checksums) {
         // Query the list of migration versions from start till the target version
         final files = await queryMigrationFiles(
           version,
@@ -437,7 +459,7 @@ mixin Migratable {
       files = {};
     }
 
-    final path = Directory(migrationsOptions.path).path.split('/').last;
+    final path = Directory(migrationOptions.path).path.split('/').last;
     final started = DateTime.now();
     if (files.isEmpty) {
       return (
@@ -459,9 +481,9 @@ mixin Migratable {
     await transaction((ctx) async {
       for (final version in files.keys) {
         for (var file in files[version]!) {
-          if (migrationsOptions.directoryBased) file = (name: '$version/${file.name}', checksum: file.checksum);
+          if (migrationOptions.directoryBased) file = (name: '$version/${file.name}', checksum: file.checksum);
           try {
-            await execute(file.name, ctx: ctx);
+            _processFile(file.name, ctx: ctx);
             executed.add(file);
             lastVersion = version;
           } catch (e) {
@@ -483,6 +505,44 @@ mixin Migratable {
       path: path,
       files: executed,
     );
+  }
+
+  /// Processes (executes all statements in) a migration file within the context
+  /// of a database transaction.
+  ///
+  /// **Parameters:**
+  /// - [file] - The path or name of the migration file to execute
+  /// - [ctx] - Optional transaction context
+  ///
+  /// **Throws:**
+  /// May throw exceptions if the migration file cannot be executed or contains
+  /// failing SQL statements.
+  Future<void> _processFile(String file, {dynamic ctx}) async {
+    final path = '${migrationOptions.path}/$file';
+    final content = await File(path).readAsString(encoding: migrationOptions.encoding);
+
+    await _retry(() => execute(content, ctx: ctx));
+  }
+
+  /// Executes an async operation with retry logic for transient failures.
+  ///
+  /// Retries the operation up to [MigrationOptions.retries] times with a
+  /// [MigrationOptions.retryDelay] delay between attempts when [isRetryable]
+  /// returns true for the caught error.
+  Future<T> _retry<T>(Future<T> Function() fn) async {
+    for (var attempt = 1; attempt <= migrationOptions.retries; attempt++) {
+      try {
+        return await fn();
+      } catch (e) {
+        if (!isRetryable(e) || attempt == migrationOptions.retries) {
+          rethrow;
+        }
+        await Future.delayed(migrationOptions.retryDelay);
+      }
+    }
+
+    // for type safety
+    throw StateError('Unreachable');
   }
 
   // endregion
@@ -527,8 +587,9 @@ class MigrationOptions {
     this.schema = '',
     this.versionTable = '_version',
     this.retries = 3,
-    this.timeout = const Duration(seconds: 15),
+    this.retryDelay = const Duration(seconds: 15),
     this.checksums = true,
+    this.encoding = utf8,
   }) : assert(
          filesPattern == null || directoryBased || filesPattern.pattern.contains('(?<version>[^_]+)'),
          'filesPattern, when in file-based versioning mode, must contain a <version> variable in the regex pattern',
@@ -544,11 +605,13 @@ class MigrationOptions {
   /// Whether migrations are organized in version-named subdirectories (true) or as versioned files (false).
   final bool directoryBased;
 
-  /// Number of retry attempts for failed migration operations.
+  /// Number of retry attempts for failed statement executions or migration operations,
+  /// due to connection or lock acquisition reasons.
   final int retries;
 
-  /// Maximum duration allowed for migration operations before timing out.
-  final Duration timeout;
+  /// Duration to delay before retrying to execute a statement or migration operation,
+  /// due to failure for connection or lock acquisition reasons.
+  final Duration retryDelay;
 
   /// The database schema name where migrations should be applied.
   final String schema;
@@ -558,6 +621,11 @@ class MigrationOptions {
 
   /// Whether to calculate and verify checksums for migration files.
   final bool checksums;
+
+  /// The encoding used to read migration files.
+  ///
+  /// Defaults to [utf8], which covers the vast majority of use cases.
+  final Encoding encoding;
   // endregion
 
   /// Pattern to match migration file names based on semantic versioning.
@@ -591,8 +659,9 @@ class MigrationOptions {
     String? schema,
     String? versionTable,
     int? retries,
-    Duration? timeout,
+    Duration? retryDelay,
     bool? checksums,
+    Encoding? encoding,
   }) {
     return MigrationOptions(
       path: path ?? this.path,
@@ -601,8 +670,9 @@ class MigrationOptions {
       schema: schema ?? this.schema,
       versionTable: versionTable ?? this.versionTable,
       retries: retries ?? this.retries,
-      timeout: timeout ?? this.timeout,
+      retryDelay: retryDelay ?? this.retryDelay,
       checksums: checksums ?? this.checksums,
+      encoding: encoding ?? this.encoding,
     );
   }
 }

@@ -4,10 +4,9 @@ A database-agnostic foundation for building structured, version-controlled datab
 [![package publisher](https://img.shields.io/pub/publisher/dbmigrator_base.svg)](https://pub.dev/packages/dbmigrator_base/publisher)
 
 This package provides the **core migration orchestration logic** — version resolution, file discovery, ordering, checksum validation,
-and direction detection — leaving only the database-specific command execution to derived packages.
+direction detection, and retry logic — leaving only the database-specific command execution to derived packages.
 
-> **This package is not intended to be used directly by end-users.** It is designed for authors of database-specific
-> migration packages.
+> **This package is not intended to be used directly by end-users.**
 > 
 > For database-specific migration tools in Dart, visit derived packages such as:
 > - [dbmigrator_psql](https://pub.dev/packages/dbmigrator_psql) - Migrations for PostgreSQL databases.
@@ -33,8 +32,8 @@ The `Migratable` mixin and `MigrationOptions` class orchestrate all database-ind
 - **Migration locks** — acquire and release migration locks to ensure no other migration can be performed at the same time
   (essential in clustered environments).
 - **Transaction-safe execution** — provides the foundation to execute all migration files under a single transaction context.
+- **Retry logic** — configurable retry attempts and timeouts for failed migration operations.
 - **Custom file patterns** — allows custom regex patterns to match migration file names.
-- **Configurable retries & timeouts.**
 - **Structured result reporting** — every `migrate()` call returns a detailed `MigrationResult` record.
 - **Standardized error types** — `MigrationError`, `MigrationInvalidVersionError`, and `MigrationChecksumMismatchError`.
 
@@ -118,7 +117,7 @@ The `MigrationOptions` class accepts the following parameters:
 
 ### 1. Implement the `Migratable` mixin
 
-Apply the `Migratable` mixin to your database class and implement the four required members:
+Apply the `Migratable` mixin to your database class and implement the required members:
 
 ```dart
 import 'dart:io';
@@ -141,8 +140,13 @@ class MyDatabase with Migratable {
   }
 
   @override
+  Future<dynamic> execute(Object stmt, {dynamic ctx}) async {
+    // Execute the statement or query against the database
+  }
+
+  @override
   Future<void> releaseLock() async {
-    // Release the lock acquired
+    // Release the lock acquired earlier
   }
 
   @override
@@ -161,13 +165,6 @@ class MyDatabase with Migratable {
   Future<void> transaction(Future<void> Function(dynamic ctx) fn) async {
     // Create transaction context, then execute the fn inside it and wait for completion
     await _pool.runTx(fn);
-  }
-
-  @override
-  Future<void> execute(String file, {ctx}) async {
-    // Read file's SQL statement contents and execute them
-    final sql = await File('${migrationsOptions.path}/$file').readAsString();
-    await ctx.execute(sql);
   }
 }
 ```
