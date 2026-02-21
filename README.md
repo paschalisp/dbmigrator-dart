@@ -97,18 +97,18 @@ A mismatch raises `MigrationChecksumMismatchError`.
 
 The `MigrationOptions` class accepts the following parameters:
 
-| Parameter        | Type       | Default        | Description                                                                                                   |
-|------------------|------------|----------------|---------------------------------------------------------------------------------------------------------------|
-| `path`           | `String`   | **(required)** | Path to the migrations directory.                                                                             |
-| `directoryBased` | `bool`     | `false`        | Use version-named directories instead of version-prefixed files.                                              |
-| `checksums`      | `bool`     | `true`         | Enable SHA-256 checksum calculation and verification.                                                         |
-| `filesPattern`   | `RegExp?`  | `null`         | Custom regex for matching migration files. Must contain a `(?<version>[^_]+)` named group in file-based mode. |
-| `encoding`       | `Encoding` | `utf8`         | The encoding used to read migration files.                                                                    |
-| `schema`         | `String`   | `''`           | Database schema name, for use by concrete implementations.                                                    |
-| `versionTable`   | `String`   | `'_version'`   | Name of the version-tracking table, for use by concrete implementations.                                      |
-| `retries`        | `int`      | `3`            | Number of retry attempts, for use by concrete implementations.                                                |
-| `timeout`        | `Duration` | `15 seconds`   | Maximum duration for operations, for use by concrete implementations.                                         |
-| `lockKey`        | `String?`  | `null`         | The key used by the `acquireLock()` and `releaseLock()` methods                                               |
+| Parameter        | Type       | Default        | Description                                                                                                                             |
+|------------------|------------|----------------|-----------------------------------------------------------------------------------------------------------------------------------------|
+| `path`           | `String`   | **(required)** | Path to the migrations directory.                                                                                                       |
+| `directoryBased` | `bool`     | `false`        | Use version-named directories instead of version-prefixed files.                                                                        |
+| `checksums`      | `bool`     | `true`         | Enable SHA-256 checksum calculation and verification.                                                                                   |
+| `filesPattern`   | `RegExp?`  | `null`         | Custom regex for matching migration files. Must contain a `(?<version>[^_]+)` named group in file-based mode.                           |
+| `encoding`       | `Encoding` | `utf8`         | The encoding used to read migration files.                                                                                              |
+| `schema`         | `String`   | `''`           | Database schema name, for use by concrete implementations.                                                                              |
+| `versionTable`   | `String`   | `'_version'`   | Name of the version-tracking table, for use by concrete implementations.                                                                |
+| `retries`        | `int`      | `3`            | Number of retry attempts, for use by concrete implementations.                                                                          |
+| `timeout`        | `Duration` | `15 seconds`   | Maximum duration for operations, for use by concrete implementations.                                                                   |
+| `lockKey`        | `String?`  | `null`         | The key used by the `acquireLock()` and `releaseLock()`. Will be auto-generated to `migration:<schema>.<versionTable>` if not provided. |
 
 
 ## Usage (for implementation packages)
