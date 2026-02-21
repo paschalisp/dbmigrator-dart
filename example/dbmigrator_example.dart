@@ -18,13 +18,20 @@ class MyDatabase with Migratable {
   }
 
   @override
-  Future<dynamic> execute(Object stmt, {dynamic ctx}) async {
-    // Execute the statement or query against the database
+  Future<void> releaseLock() async {
+    // Release the lock acquired earlier
   }
 
   @override
-  Future<void> releaseLock() async {
-    // Release the lock acquired earlier
+  Future<void> transaction(Future<void> Function(dynamic ctx) fn) async {
+    // Create transaction context, then execute the fn inside it and wait for completion
+    await _pool.runTx(fn);
+  }
+
+  @override
+  Future<dynamic> execute(Object stmt, {dynamic ctx}) async {
+    // Execute the statement or query against the database
+    return await ctx.execute(stmt);
   }
 
   @override
@@ -37,11 +44,5 @@ class MyDatabase with Migratable {
     final row = result.first.toColumnMap();
 
     return (version: row['version'] as String? ?? '', checksum: row['checksum'] as String? ?? '');
-  }
-
-  @override
-  Future<void> transaction(Future<void> Function(dynamic ctx) fn) async {
-    // Create transaction context, then execute the fn inside it and wait for completion
-    await _pool.runTx(fn);
   }
 }

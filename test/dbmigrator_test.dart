@@ -5,6 +5,17 @@ void main() {
   const String select1Checksum = '17db4fd369edb9244b9f91d9aeed145c3d04ad8ba6e95d06247f07a63527d11a';
   const String v111Checksum = '6c024c2720d15a453119b89c9f5a68b60084b7a7ad3aadcb17a079d822b060cd';
 
+  group('Migration options model checks', () {
+    test('Default lockKey is correct when no schema is given', () {
+      final options = MigrationOptions(path: './');
+      expect(options.lockKey, 'migration_${options.versionTable}');
+    });
+    test('Default lockKey is correct when a custom schema and version table is given', () {
+      final options = MigrationOptions(path: './', schema: 'public', versionTable: '_test');
+      expect(options.lockKey, 'migration_public._test');
+    });
+  });
+
   group('Migration file pattern checks', () {
     test('version can be anywhere in the regex pattern', () {
       expect(

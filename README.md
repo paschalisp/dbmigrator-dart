@@ -97,20 +97,18 @@ A mismatch raises `MigrationChecksumMismatchError`.
 
 The `MigrationOptions` class accepts the following parameters:
 
-| Parameter        | Type       | Default        | Description                                                                        |
-| ---------------- | ---------- | -------------- | ---------------------------------------------------------------------------------- |
-| `path`           | `String`   | **(required)** | Path to the migrations directory.                                                  |
-| `directoryBased` | `bool`     | `false`        | Use version-named directories instead of version-prefixed files.                   |
-| `checksums`      | `bool`     | `true`         | Enable SHA-256 checksum calculation and verification.                              |
+| Parameter        | Type       | Default        | Description                                                                                                   |
+|------------------|------------|----------------|---------------------------------------------------------------------------------------------------------------|
+| `path`           | `String`   | **(required)** | Path to the migrations directory.                                                                             |
+| `directoryBased` | `bool`     | `false`        | Use version-named directories instead of version-prefixed files.                                              |
+| `checksums`      | `bool`     | `true`         | Enable SHA-256 checksum calculation and verification.                                                         |
 | `filesPattern`   | `RegExp?`  | `null`         | Custom regex for matching migration files. Must contain a `(?<version>[^_]+)` named group in file-based mode. |
-| `schema`         | `String`   | `''`           | Database schema name, for use by concrete implementations.                         |
-| `versionTable`   | `String`   | `'_version'`   | Name of the version-tracking table, for use by concrete implementations.           |
-| `retries`        | `int`      | `3`            | Number of retry attempts, for use by concrete implementations.                     |
-| `timeout`        | `Duration` | `15 seconds`   | Maximum duration for operations, for use by concrete implementations.              |
-
-> **Note:** `schema`, `versionTable`, `retries`, and `timeout` are not consumed by the `Migratable` mixin itself.
-> They are provided as standardized configuration so that all database-specific packages built on top of `dbmigrator_base`
-> expose a consistent set of options.
+| `encoding`       | `Encoding` | `utf8`         | The encoding used to read migration files.                                                                    |
+| `schema`         | `String`   | `''`           | Database schema name, for use by concrete implementations.                                                    |
+| `versionTable`   | `String`   | `'_version'`   | Name of the version-tracking table, for use by concrete implementations.                                      |
+| `retries`        | `int`      | `3`            | Number of retry attempts, for use by concrete implementations.                                                |
+| `timeout`        | `Duration` | `15 seconds`   | Maximum duration for operations, for use by concrete implementations.                                         |
+| `lockKey`        | `String?`  | `null`         | The key used by the `acquireLock()` and `releaseLock()` methods                                               |
 
 
 ## Usage (for implementation packages)
@@ -125,14 +123,14 @@ import 'dart:io';
 import 'package:dbmigrator_base/dbmigrator_base.dart';
 
 class MyDatabase with Migratable {
-  MyDatabase({required this.migrationsOptions});
+  MyDatabase({required this.migrationOptions});
 
   // Some database connection pool your app or package uses
   // Needs to be instantiated somewhere beforehand
   final Pool? _pool;
 
   @override
-  final MigrationOptions migrationsOptions;
+  final MigrationOptions migrationOptions;
 
   @override
   Future<void> acquireLock() async {
@@ -140,13 +138,20 @@ class MyDatabase with Migratable {
   }
 
   @override
-  Future<dynamic> execute(Object stmt, {dynamic ctx}) async {
-    // Execute the statement or query against the database
+  Future<void> releaseLock() async {
+    // Release the lock acquired earlier
   }
 
   @override
-  Future<void> releaseLock() async {
-    // Release the lock acquired earlier
+  Future<void> transaction(Future<void> Function(dynamic ctx) fn) async {
+    // Create transaction context, then execute the fn inside it and wait for completion
+    await _pool.runTx(fn);
+  }
+
+  @override
+  Future<dynamic> execute(Object stmt, {dynamic ctx}) async {
+    // Execute the statement or query against the database
+    return await ctx.execute(stmt);
   }
 
   @override
@@ -159,12 +164,6 @@ class MyDatabase with Migratable {
     final row = result.first.toColumnMap();
 
     return (version: row['version'] as String? ?? '', checksum: row['checksum'] as String? ?? '');
-  }
-
-  @override
-  Future<void> transaction(Future<void> Function(dynamic ctx) fn) async {
-    // Create transaction context, then execute the fn inside it and wait for completion
-    await _pool.runTx(fn);
   }
 }
 ```

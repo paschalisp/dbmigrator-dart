@@ -590,7 +590,9 @@ class MigrationOptions {
     this.retryDelay = const Duration(seconds: 15),
     this.checksums = true,
     this.encoding = utf8,
-  }) : assert(
+    String? lockKey,
+  }) : lockKey = lockKey ?? 'migration_${schema.isNotEmpty ? '$schema.$versionTable' : versionTable}',
+       assert(
          filesPattern == null || directoryBased || filesPattern.pattern.contains('(?<version>[^_]+)'),
          'filesPattern, when in file-based versioning mode, must contain a <version> variable in the regex pattern',
        );
@@ -626,6 +628,11 @@ class MigrationOptions {
   ///
   /// Defaults to [utf8], which covers the vast majority of use cases.
   final Encoding encoding;
+
+  /// The key used by [acquireLock] / [releaseLock] to prevent concurrent migration execution in clustered environments.
+  ///
+  /// Defaults to `'migration_<schema>.<versionTable>'`.
+  final String lockKey;
   // endregion
 
   /// Pattern to match migration file names based on semantic versioning.
