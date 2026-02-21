@@ -276,6 +276,22 @@ mixin Migratable {
   // endregion
 
   // region Migration execution methods
+  /// Acquires a migration lock to prevent concurrent migration execution
+  /// in clustered environments.
+  ///
+  /// The lock should be held for the duration of the migration and released
+  /// by [releaseLock]. If locking is not needed, simply leave the default
+  /// no-op implementation.
+  ///
+  /// **Throws:** if the lock cannot be acquired within the configured timeout.
+  Future<void> acquireLock() async {}
+
+  /// Releases the migration lock acquired by [acquireLock].
+  ///
+  /// This is called in a `finally` block, so it will execute even if the
+  /// migration fails.
+  Future<void> releaseLock() async {}
+
   /// Executes a function within a database transaction context.
   ///
   /// This method wraps the provided function in a database transaction, ensuring
@@ -332,10 +348,12 @@ mixin Migratable {
   ///    (with relative path, starting from inside the migration directory)
   ///
   /// **Behavior:**
+  /// - Acquires a lock before querying for the current version
   /// - Compares current version with target version to determine migration direction
   /// - Queries appropriate migration files based on version comparison
   /// - Executes migration files within a transaction context
   /// - Automatically rolls back on failure and throws [MigrationError]
+  /// - Releases the lock acquired when starting the migration process
   /// - Returns early if no migration files are found
   ///
   /// **Throws:**
@@ -348,6 +366,21 @@ mixin Migratable {
   /// print(result.message); // "Migrated 5 files in 3 seconds."
   /// ```
   Future<MigrationResult> migrate({
+    required String version,
+    ({String version, String checksum})? current,
+    dynamic ctx,
+  }) async {
+    await acquireLock();
+    try {
+      return await _migrate(version: version, current: current, ctx: ctx);
+    } finally {
+      try {
+        await releaseLock();
+      } catch (_) {}
+    }
+  }
+
+  Future<MigrationResult> _migrate({
     required String version,
     ({String version, String checksum})? current,
     dynamic ctx,

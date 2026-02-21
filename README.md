@@ -30,6 +30,8 @@ The `Migratable` mixin and `MigrationOptions` class orchestrate all database-ind
   (however, single migration files are the recommended).
 - **SHA-256 checksum verification** — optional integrity checks to detect migration files modified after applying the migration.
 - **Custom file patterns** — configurable regex for non-standard file naming conventions.
+- **Migration locks** — acquire and release migration locks to ensure no other migration can be performed at the same time
+  (essential in clustered environments).
 - **Transaction-safe execution** — provides the foundation to execute all migration files under a single transaction context.
 - **Custom file patterns** — allows custom regex patterns to match migration file names.
 - **Configurable retries & timeouts.**
@@ -132,6 +134,16 @@ class MyDatabase with Migratable {
 
   @override
   final MigrationOptions migrationsOptions;
+
+  @override
+  Future<void> acquireLock() async {
+    // Acquire a migration lock
+  }
+
+  @override
+  Future<void> releaseLock() async {
+    // Release the lock acquired
+  }
 
   @override
   Future<({String version, String checksum})?> queryVersion() async {

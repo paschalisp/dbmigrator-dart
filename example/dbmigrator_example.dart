@@ -13,6 +13,16 @@ class MyDatabase with Migratable {
   final MigrationOptions migrationsOptions;
 
   @override
+  Future<void> acquireLock() async {
+    // Acquire a migration lock
+  }
+
+  @override
+  Future<void> releaseLock() async {
+    // Release the lock acquired earlier
+  }
+
+  @override
   Future<({String version, String checksum})?> queryVersion() async {
     // Query version (plus checksum, if enabled) from the database
     final sql = 'SELECT version, checksum FROM _version ORDER BY id DESC LIMIT 1';
