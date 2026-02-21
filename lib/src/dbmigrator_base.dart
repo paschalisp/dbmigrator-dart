@@ -591,7 +591,7 @@ class MigrationOptions {
     this.checksums = true,
     this.encoding = utf8,
     String? lockKey,
-  }) : lockKey = lockKey ?? 'migration_${schema.isNotEmpty ? '$schema.$versionTable' : versionTable}',
+  }) : lockKey = lockKey ?? 'migration:${schema.isNotEmpty ? '$schema.$versionTable' : versionTable}',
        assert(
          filesPattern == null || directoryBased || filesPattern.pattern.contains('(?<version>[^_]+)'),
          'filesPattern, when in file-based versioning mode, must contain a <version> variable in the regex pattern',

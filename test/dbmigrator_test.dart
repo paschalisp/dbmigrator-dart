@@ -8,11 +8,11 @@ void main() {
   group('Migration options model checks', () {
     test('Default lockKey is correct when no schema is given', () {
       final options = MigrationOptions(path: './');
-      expect(options.lockKey, 'migration_${options.versionTable}');
+      expect(options.lockKey, 'migration:${options.versionTable}');
     });
     test('Default lockKey is correct when a custom schema and version table is given', () {
       final options = MigrationOptions(path: './', schema: 'public', versionTable: '_test');
-      expect(options.lockKey, 'migration_public._test');
+      expect(options.lockKey, 'migration:public._test');
     });
   });
 
