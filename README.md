@@ -108,7 +108,8 @@ The `MigrationOptions` class accepts the following parameters:
 | `schema`         | `String`   | `''`           | Database schema name, for use by concrete implementations.                                                                              |
 | `versionTable`   | `String`   | `'_version'`   | Name of the version-tracking table, for use by concrete implementations.                                                                |
 | `retries`        | `int`      | `3`            | Number of retry attempts, for use by concrete implementations.                                                                          |
-| `timeout`        | `Duration` | `15 seconds`   | Maximum duration for operations, for use by concrete implementations.                                                                   |
+| `retryDelay`     | `Duration` | `5 seconds`    | Duration to delay before retrying to execute a statement or migration operation.                                                        |
+| `timeout`        | `Duration` | `15 seconds`   | Maximum duration for executing single statements, such as such as querying/saving versions and lock/unlocking.                          |
 | `lockKey`        | `String?`  | `null`         | The key used by the `acquireLock()` and `releaseLock()`. Will be auto-generated to `migration:<schema>.<versionTable>` if not provided. |
 
 

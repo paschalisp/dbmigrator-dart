@@ -639,7 +639,8 @@ class MigrationOptions {
     this.schema = '',
     this.versionTable = '_version',
     this.retries = 3,
-    this.retryDelay = const Duration(seconds: 15),
+    this.retryDelay = const Duration(seconds: 5),
+    this.timeout = const Duration(seconds: 15),
     this.checksums = true,
     this.encoding = utf8,
     String? lockKey,
@@ -666,6 +667,13 @@ class MigrationOptions {
   /// Duration to delay before retrying to execute a statement or migration operation,
   /// due to failure for connection or lock acquisition reasons.
   final Duration retryDelay;
+
+  /// Duration to timeout the execution of single statements,
+  /// such as querying/saving versions in history and lock/unlocking.
+  ///
+  /// **Note:** The actual timeout logic must be implemented by the class
+  /// that extends the [Migratable] mixin.
+  final Duration timeout;
 
   /// The database schema name where migrations should be applied.
   final String schema;
@@ -719,6 +727,7 @@ class MigrationOptions {
     String? versionTable,
     int? retries,
     Duration? retryDelay,
+    Duration? timeout,
     bool? checksums,
     Encoding? encoding,
   }) {
@@ -730,6 +739,7 @@ class MigrationOptions {
       versionTable: versionTable ?? this.versionTable,
       retries: retries ?? this.retries,
       retryDelay: retryDelay ?? this.retryDelay,
+      timeout: timeout ?? this.timeout,
       checksums: checksums ?? this.checksums,
       encoding: encoding ?? this.encoding,
     );
