@@ -1,7 +1,7 @@
-A database-agnostic foundation for building structured, version-controlled database migration tools in Dart.
+A database-agnostic migration framework for building structured, version-controlled database migration tools in Dart.
 
-[![pub package](https://img.shields.io/pub/v/dbmigrator_base.svg)](https://pub.dev/packages/dbmigrator_base)
-[![package publisher](https://img.shields.io/pub/publisher/dbmigrator_base.svg)](https://pub.dev/packages/dbmigrator_base/publisher)
+[![pub package](https://img.shields.io/pub/v/dbmigrator.svg)](https://pub.dev/packages/dbmigrator)
+[![package publisher](https://img.shields.io/pub/publisher/dbmigrator.svg)](https://pub.dev/packages/dbmigrator/publisher)
 
 This package provides the **core database migration orchestration logic** — current/target version resolution,
 migration files, ordering, validating file checksums, upgrade/downgrade detection, and retry logic — leaving only
@@ -23,10 +23,10 @@ The `Migratable` mixin and `MigrationOptions` class orchestrate all database-ind
 - **Automatic direction detection** — determines whether to upgrade or downgrade based on the current vs. target version.
 - **Migration file discovery** — scans a migrations directory and resolves which files need to run, in the correct order.
 - **Two migration file structure modes:**
-  - **File-based** — `.sql` files named with their version (e.g., `1.0.0.sql`, `1.2.0_add_users.sql`).
-  - **Directory-based** — version-named subdirectories containing any number of `.sql` files.
-- Multiple files with the same version prefix are supported and executed in alphabetical order (e.g., `1.2.0_a_core_tables.sql`,
-  `1.2.0_b_crm_tables.sql`), in both file-based and directory-based structures
+  - **File-based** — `.[up|down].sql` files named with their version (e.g., `1.0.0.up.sql`, `1.2.0_add_users.up.sql`).
+  - **Directory-based** — version-named subdirectories containing any number of `.[up|down].sql` files.
+- Multiple files with the same version prefix are supported and executed in alphabetical order (e.g., `1.2.0_a_core_tables.up.sql`,
+  `1.2.0_b_crm_tables.up.sql`), in both file-based and directory-based structures
   (however, single migration files are the recommended).
 - **SHA-256 checksum verification** — optional integrity checks to detect migration files modified after applying the migration.
 - **Custom file patterns** — configurable regex for non-standard file naming conventions.
@@ -48,32 +48,46 @@ Multiple files can share the same version prefix and will be executed in alphabe
 
 ```
 migrations/ (or a custom directory name)
-    ├── 0.0.1.sql
-    ├── 0.1.0_create_users.sql
-    ├── 1.0.0.sql
-    ├── 1.0.0-pre_experimental.sql
-    ├── 1.1.0_add_index.sql
-    ├── 1.2.0_change.sql
-    ├── 1.2.0_crm_tables.sql
-    └── 2.0.0.sql
+    ├── 0.0.1.down.sql
+    ├── 0.0.1.up.sql
+    ├── 0.1.0_create_users.down.sql
+    ├── 0.1.0_create_users.up.sql
+    ├── 1.0.0.down.sql
+    ├── 1.0.0.up.sql
+    ├── 1.0.0-pre_experimental.down.sql
+    ├── 1.0.0-pre_experimental.up.sql
+    ├── 1.1.0_add_index.down.sql
+    ├── 1.1.0_add_index.up.sql
+    ├── 1.2.0_change.down.sql
+    ├── 1.2.0_change.up.sql
+    ├── 1.2.0_crm_tables.down.sql
+    ├── 1.2.0_crm_tables.up.sql
+    └── 2.0.0.down.sql
+    └── 2.0.0.up.sql
 ```
 
 ### Directory-based
 
-Each version gets its own subdirectory, and all `.sql` files within it are executed in alphabetical order.
+Each version gets its own subdirectory, and all `.[up|down].sql` files within it are executed in alphabetical order.
 
 ```
 migrations/ (or a custom directory name)
     ├── 0.0.1/
-    │   └── init.sql
+    │   └── down.sql
+    │   └── up.sql
     ├── 1.0.0/
-    │   └── schema.sql
+    │   └── schema_changes.down.sql
+    │   └── schema_changes.up.sql
     ├── 1.1.1/
-    │   ├── a_create_tables.sql
-    │   ├── b_add_indexes.sql
-    │   └── c_seed_data.sql
+    │   ├── a_create_tables.down.sql
+    │   ├── a_create_tables.up.sql
+    │   ├── b_add_indexes.down.sql
+    │   ├── b_add_indexes.up.sql
+    │   └── c_seed_data.down.sql
+    │   └── c_seed_data.up.sql
     └── 2.0.0/
-        └── upgrade.sql
+        └── upgrade.down.sql
+        └── upgrade.up.sql
 ```
 
 
@@ -81,11 +95,11 @@ migrations/ (or a custom directory name)
 
 ### Direction detection
 
-| Condition                        | Action                                                        |
-| -------------------------------- | ------------------------------------------------------------- |
-| Current version < target version | **Upgrade** — executes migration files from current → target. |
+| Condition                        | Action                                                                          |
+|----------------------------------|---------------------------------------------------------------------------------|
+| Current version < target version | **Upgrade** — executes migration files from current → target.                   |
 | Current version > target version | **Downgrade** — executes migration files from current → target (reverse order). |
-| Current version = target version | **No-op** — verifies checksums (if enabled) and returns.      |
+| Current version = target version | **No-op** — verifies checksums (if enabled) and returns.                        |
 
 ### Checksum verification
 

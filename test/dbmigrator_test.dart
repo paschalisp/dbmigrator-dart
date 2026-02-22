@@ -16,20 +16,18 @@ void main() {
   });
 
   group('Migration file pattern checks', () {
-    test('version can be anywhere in the regex pattern', () {
+    test('version and dir can be anywhere in the regex pattern', () {
       expect(
-        () => MigrationOptions(path: './', filesPattern: RegExp(r'file_(?<version>[^_]+)_run.sql')),
-        returnsNormally,
-      );
-
-      expect(
-        () => MigrationOptions(path: './', filesPattern: RegExp(r'file_(?<version>[^_]+)_run.sql')),
+        () => MigrationOptions(path: './', filesPattern: RegExp(r'file_(?<version>[^_]+)_.(?<dir>up|down).run.sql')),
         returnsNormally,
       );
     });
 
-    test('version can be the whole regex pattern', () {
-      expect(() => MigrationOptions(path: './', filesPattern: RegExp(r'(?<version>[^_]+)')), returnsNormally);
+    test('version and dir can be the whole regex pattern', () {
+      expect(
+        () => MigrationOptions(path: './', filesPattern: RegExp(r'(?<version>[^_]+).(?<dir>up|down).sql')),
+        returnsNormally,
+      );
     });
 
     test('invalid version pattern in regex raises exception', () {
@@ -67,7 +65,7 @@ void main() {
     });
 
     test('Empty current version returns no migration downgrades', () async {
-      final versions = (await db.queryMigrationVersions('2.0.0', upgradable: false)).names();
+      final versions = (await db.queryMigrationVersions('2.0.0', direction: MigrationDirection.down)).names();
 
       expect(versions, isEmpty);
     });
@@ -82,7 +80,7 @@ void main() {
       final versions = await db.queryMigrationVersions(
         '1.0.0',
         current: (version: '0.1.0', checksum: ''),
-        upgradable: false,
+        direction: MigrationDirection.down,
       );
 
       expect(versions, isEmpty);
@@ -98,7 +96,7 @@ void main() {
       final versions = (await db.queryMigrationVersions(
         '0.0.0',
         current: (version: '1.1.1', checksum: ''),
-        upgradable: false,
+        direction: MigrationDirection.down,
       )).names();
 
       expect(versions, containsAllInOrder(['1.1.0', '1.0.0', '1.0.0-pre', '0.1.0', '0.0.1']));
@@ -131,16 +129,16 @@ void main() {
     test('Returns the correct migration files and checksums per version', () async {
       final versions = await db.queryMigrationFiles('3.0.0');
 
-      expect(versions['0.0.1']?.names(), containsAllInOrder(['0.0.1.sql']));
+      expect(versions['0.0.1']?.names(), containsAllInOrder(['0.0.1.up.sql']));
       expect(versions['0.0.1']?.firstOrNull?.checksum, select1Checksum);
-      expect(versions['0.1.0']?.names(), containsAllInOrder(['0.1.0_test.sql']));
-      expect(versions['1.0.0-pre']?.names(), containsAllInOrder(['1.0.0-pre_test.sql']));
-      expect(versions['1.0.0']?.names(), containsAllInOrder(['1.0.0.sql']));
-      expect(versions['1.1.0']?.names(), containsAllInOrder(['1.1.0_test.sql']));
-      expect(versions['1.1.1']?.names(), containsAllInOrder(['1.1.1_test.sql']));
-      expect(versions['1.2.0']?.names(), containsAllInOrder(['1.2.0_test.sql', '1.2.0_test2.sql']));
-      expect(versions['2.0.0-rc1']?.names(), containsAllInOrder(['2.0.0-rc1.sql']));
-      expect(versions['2.0.0']?.names(), containsAllInOrder(['2.0.0.sql']));
+      expect(versions['0.1.0']?.names(), containsAllInOrder(['0.1.0_test.up.sql']));
+      expect(versions['1.0.0-pre']?.names(), containsAllInOrder(['1.0.0-pre_test.up.sql']));
+      expect(versions['1.0.0']?.names(), containsAllInOrder(['1.0.0.up.sql']));
+      expect(versions['1.1.0']?.names(), containsAllInOrder(['1.1.0_test.up.sql']));
+      expect(versions['1.1.1']?.names(), containsAllInOrder(['1.1.1_test.up.sql']));
+      expect(versions['1.2.0']?.names(), containsAllInOrder(['1.2.0_test.up.sql', '1.2.0_test2.up.sql']));
+      expect(versions['2.0.0-rc1']?.names(), containsAllInOrder(['2.0.0-rc1.up.sql']));
+      expect(versions['2.0.0']?.names(), containsAllInOrder(['2.0.0.up.sql']));
     });
   });
 
@@ -162,7 +160,7 @@ void main() {
     });
 
     test('Empty current version returns no migration downgrades', () async {
-      final versions = await db.queryMigrationVersions('3.0.0', upgradable: false);
+      final versions = await db.queryMigrationVersions('3.0.0', direction: MigrationDirection.down);
 
       expect(versions, isEmpty);
     });
@@ -177,7 +175,7 @@ void main() {
       final versions = await db.queryMigrationVersions(
         '1.0.0',
         current: (version: '0.1.0', checksum: ''),
-        upgradable: false,
+        direction: MigrationDirection.down,
       );
 
       expect(versions, isEmpty);
@@ -193,7 +191,7 @@ void main() {
       final versions = (await db.queryMigrationVersions(
         '0.0.0',
         current: (version: '1.1.1', checksum: ''),
-        upgradable: false,
+        direction: MigrationDirection.down,
       )).names();
 
       expect(versions, containsAllInOrder(['1.1.0', '1.0.0', '0.1.0', '0.0.1']));
@@ -226,14 +224,14 @@ void main() {
     test('Returns the correct migration files per version', () async {
       final versions = await db.queryMigrationFiles('3.0.0');
 
-      expect(versions['0.0.1']?.names(), containsAllInOrder(['empty.sql']));
+      expect(versions['0.0.1']?.names(), containsAllInOrder(['up.sql']));
       expect(versions['0.0.1']?.firstOrNull?.checksum, select1Checksum);
-      expect(versions['0.1.0']?.names(), containsAllInOrder(['empty.sql']));
-      expect(versions['1.0.0']?.names(), containsAllInOrder(['empty.sql']));
-      expect(versions['1.1.0']?.names(), containsAllInOrder(['empty.sql']));
-      expect(versions['1.1.1']?.names(), containsAllInOrder(['a.sql', 'b.sql', 'c.sql']));
-      expect(versions['1.2.0']?.names(), containsAllInOrder(['empty.sql']));
-      expect(versions['2.0.0']?.names(), containsAllInOrder(['empty.sql']));
+      expect(versions['0.1.0']?.names(), containsAllInOrder(['up.sql']));
+      expect(versions['1.0.0']?.names(), containsAllInOrder(['up.sql']));
+      expect(versions['1.1.0']?.names(), containsAllInOrder(['up.sql']));
+      expect(versions['1.1.1']?.names(), containsAllInOrder(['a.up.sql', 'b.up.sql', 'c.up.sql']));
+      expect(versions['1.2.0']?.names(), containsAllInOrder(['up.sql']));
+      expect(versions['2.0.0']?.names(), containsAllInOrder(['up.sql']));
     });
   });
 
@@ -248,7 +246,7 @@ void main() {
       expect(res.direction, MigrationDirection.up);
       expect(
         res.files.names(),
-        containsAllInOrder(['1.2.0_test.sql', '1.2.0_test2.sql', '2.0.0-rc1.sql', '2.0.0.sql']),
+        containsAllInOrder(['1.2.0_test.up.sql', '1.2.0_test2.up.sql', '2.0.0-rc1.up.sql', '2.0.0.up.sql']),
       );
     });
 
@@ -257,7 +255,13 @@ void main() {
       expect(res.direction, MigrationDirection.down);
       expect(
         res.files.names(),
-        containsAllInOrder(['1.1.0_test.sql', '1.0.0.sql', '1.0.0-pre_test.sql', '0.1.0_test.sql', '0.0.1.sql']),
+        containsAllInOrder([
+          '1.1.0_test.down.sql',
+          '1.0.0.down.sql',
+          '1.0.0-pre_test.down.sql',
+          '0.1.0_test.down.sql',
+          '0.0.1.down.sql',
+        ]),
       );
     });
 
@@ -299,7 +303,7 @@ void main() {
     test('Executes the correct upgrade migration files', () async {
       final res = await db.migrate(version: '2.0.0');
       expect(res.direction, MigrationDirection.up);
-      expect(res.files.names(), containsAllInOrder(['1.2.0/empty.sql', '2.0.0-rc1/empty.sql', '2.0.0/empty.sql']));
+      expect(res.files.names(), containsAllInOrder(['1.2.0/up.sql', '2.0.0-rc1/up.sql', '2.0.0/up.sql']));
     });
 
     test('Executes the correct downgrade migration files', () async {
@@ -308,17 +312,17 @@ void main() {
       expect(
         res.files.names(),
         containsAllInOrder([
-          '1.1.0/empty.sql',
-          '1.0.0/empty.sql',
-          '1.0.0-pre/empty.sql',
-          '0.1.0/empty.sql',
-          '0.0.1/empty.sql',
+          '1.1.0/down.sql',
+          '1.0.0/down.sql',
+          '1.0.0-pre/down.sql',
+          '0.1.0/down.sql',
+          '0.0.1/down.sql',
         ]),
       );
     });
   });
 
-  group('Same local/db version checks', () {
+  group('Same current/target version checks', () {
     test('Migrating to the same version returns none as direction', () async {
       final db = DummyDb(
         currentVersion: '1.1.1',

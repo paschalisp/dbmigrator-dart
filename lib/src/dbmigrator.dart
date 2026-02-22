@@ -24,7 +24,7 @@ import 'package:pub_semver/pub_semver.dart';
 /// **Example:**
 /// ```dart
 /// final result = await db.migrate(version: '2.0.0');
-/// print('Migration ${result.upgrade ? "upgraded" : "downgraded"} from ${result.fromVersion} to ${result.toVersion}');
+/// print('Migrated from ${result.fromVersion} to ${result.toVersion} (${result.direction.name})');
 /// print('Executed files: ${result.files.map((f) => f.name).join(", ")}');
 /// print('Duration: ${result.completed.difference(result.started).inSeconds} seconds');
 /// ```
@@ -237,18 +237,18 @@ mixin Migratable {
   /// Returns a list of available migration versions found in the migrations directory
   /// that are older or newer than the provided [targetVersions], along with each version's checksum (if enabled).
   ///
-  /// [targetVersions] - The target version to check migrations from
-  /// [upgradable] - If true, will return versions that are older than the target version (upgradable);
-  ///   otherwise will return versions that are newer (downgradable) than the target version.
+  /// - [direction] - If [MigrationDirection.up], will return versions that are older than the target version (upgradable);
+  ///   if [MigrationDirection.down], will return versions that are newer (downgradable) than the target version;
+  ///   if [MigrationDirection.none], will return the target version.
   ///
   /// Returns a list of available migration versions and their checksums (if enabled),
   /// sorted either from oldest to newest (upgradable) or newest to oldest (downgradable), empty if none found.
   Future<List<({String name, String checksum})>> queryMigrationVersions(
     String targetVersions, {
     ({String version, String checksum})? current,
-    bool upgradable = true,
+    MigrationDirection direction = MigrationDirection.up,
   }) async {
-    final versions = (await queryMigrationFiles(targetVersions, current: current, upgradable: upgradable));
+    final versions = (await queryMigrationFiles(targetVersions, current: current, direction: direction));
 
     return versions.keys.map((v) => (name: v, checksum: versions[v]!.checksum())).toList();
   }
@@ -257,15 +257,16 @@ mixin Migratable {
   /// that are newer or older than the provided [targetVersion].
   ///
   /// - [targetVersion] - The target version to check upgrades from
-  /// - [upgradable] - If true, will return migration files that are older than the target version (upgradable);
-  ///   otherwise will return migration versions that are newer (downgradable) than the target version.
+  /// - [direction] - If [MigrationDirection.up], will return migration files that are older than the target version (upgradable);
+  ///   if [MigrationDirection.down], will return migration files that are newer (downgradable) than the target version;
+  ///   if [MigrationDirection.none], will return migration files that belong to the target version.
   ///
   /// Returns a map of available migration files with the key containing their version, empty if none found.
   /// Keys (versions) are sorted either from oldest to newest (upgradable) or newest to oldest (downgradable).
   Future<Map<String, List<({String name, String checksum})>>> queryMigrationFiles(
     String targetVersion, {
     ({String version, String checksum})? current,
-    bool upgradable = true,
+    MigrationDirection direction = MigrationDirection.up,
   }) async {
     // Check if migrations directory exists
     final dir = Directory(migrationOptions.path);
@@ -289,10 +290,10 @@ mixin Migratable {
       throw MigrationInvalidVersionError(message: 'Target version "$targetVersion" has not a valid version format.');
     }
 
-    if (upgradable) {
+    if (direction == MigrationDirection.up) {
       // Return empty if current already newer than target
       if (currVer != null && targVer <= currVer) return {};
-    } else {
+    } else if (direction == MigrationDirection.down) {
       // Return empty if current already older than target
       if (currVer == null || targVer >= currVer) return {};
     }
@@ -308,12 +309,14 @@ mixin Migratable {
 
         try {
           final ver = Version.parse(versionStr);
-          if (upgradable) {
+          if (direction == MigrationDirection.up) {
             // Not interested in versions older than the current, neither newer than the target
             if ((currVer != null && ver <= currVer) || ver > targVer) continue;
-          } else {
+          } else if (direction == MigrationDirection.down) {
             // Not interested in versions newer than the current, neither older than the target
             if (currVer == null || ver >= currVer || ver < targVer) continue;
+          } else {
+            if (ver != targVer) continue;
           }
 
           final files = <({String name, String checksum})>[];
@@ -326,6 +329,14 @@ mixin Migratable {
             // Check file's name and extract its version info
             final match = migrationOptions.regex.firstMatch(name);
             if (match == null) continue;
+
+            final dir = match.namedGroup('dir');
+            if (direction != MigrationDirection.none) {
+              if (dir == null || MigrationDirection.fromCode(dir) != direction) continue;
+            } else {
+              // If direction is none, then consider upgrade files
+              if (dir == null || MigrationDirection.up != direction) continue;
+            }
 
             String checksum = '';
             if (migrationOptions.checksums) {
@@ -353,14 +364,24 @@ mixin Migratable {
         final versionStr = match.namedGroup('version');
         if (versionStr == null) continue;
 
+        final dir = match.namedGroup('dir');
+        if (direction != MigrationDirection.none) {
+          if (dir == null || MigrationDirection.fromCode(dir) != direction) continue;
+        } else {
+          // If direction is none, then consider upgrade files
+          if (dir == null || MigrationDirection.up != direction) continue;
+        }
+
         try {
           final ver = Version.parse(versionStr);
-          if (upgradable) {
+          if (direction == MigrationDirection.up) {
             // Not interested in versions older than the current, neither newer than the target
             if ((currVer != null && ver <= currVer) || ver > targVer) continue;
-          } else {
+          } else if (direction == MigrationDirection.down) {
             // Not interested in versions newer than the current, neither older than the target
             if (currVer == null || ver >= currVer || ver < targVer) continue;
+          } else {
+            if (ver != targVer) continue;
           }
 
           String checksum = '';
@@ -375,7 +396,7 @@ mixin Migratable {
       }
     }
 
-    final sortFn = (upgradable) ? (a, b) => a.compareTo(b) : (a, b) => b.compareTo(a);
+    final sortFn = (direction == MigrationDirection.up) ? (a, b) => a.compareTo(b) : (a, b) => b.compareTo(a);
 
     // Return properly sorted map entries
     return Map.fromEntries(
@@ -471,22 +492,27 @@ mixin Migratable {
     } catch (e) {
       throw MigrationInvalidVersionError(message: 'Invalid target version "$targVer": $e');
     }
+
+    final direction = MigrationDirection.fromVersions(currVer, targVer);
     // endregion
 
     // region Extract all files to be processed, in the correct order
     late final Map<String, List<({String name, String checksum})>> files;
 
     if (currVer == null || currVer < targVer) {
-      files = await queryMigrationFiles(version, current: current, upgradable: true);
+      // Upgrade database
+      files = await queryMigrationFiles(version, current: current, direction: MigrationDirection.up);
     } else if (currVer > targVer) {
-      files = await queryMigrationFiles(version, current: current, upgradable: false);
+      // Downgrade database
+      files = await queryMigrationFiles(version, current: current, direction: MigrationDirection.down);
     } else {
+      // region If checksums are enabled, validate file checksums against the database
       if (migrationOptions.checksums) {
-        // Query the list of migration versions from start till the target version
+        // Query the list of migration files that belong to the target version
         final files = await queryMigrationFiles(
           version,
-          current: (version: '0.0.1-pre+9999', checksum: ''),
-          upgradable: true,
+          current: (version: minVersion, checksum: ''),
+          direction: MigrationDirection.up,
         );
         if (files.isNotEmpty) {
           final checksum = files[files.keys.last]!.checksum();
@@ -499,6 +525,7 @@ mixin Migratable {
           }
         }
       }
+      // endregion
 
       files = {};
     }
@@ -507,7 +534,7 @@ mixin Migratable {
     final started = DateTime.now();
     if (files.isEmpty) {
       return (
-        direction: MigrationDirection.fromVersions(currVer, targVer),
+        direction: direction,
         fromVersion: currVer?.toString() ?? '',
         toVersion: targVer.toString(),
         message: 'No migration files found to process',
@@ -533,7 +560,7 @@ mixin Migratable {
         for (var file in files[version]!) {
           if (migrationOptions.directoryBased) file = (name: '$version/${file.name}', checksum: file.checksum);
           try {
-            _processFile(file.name, ctx: ctx);
+            await _processFile(file.name, ctx: ctx);
             executed.add(file);
             lastVersion = version;
           } catch (e) {
@@ -576,7 +603,7 @@ mixin Migratable {
     final path = '${migrationOptions.path}/$file';
     final content = await File(path).readAsString(encoding: migrationOptions.encoding);
 
-    await _retry(() => execute(content, ctx: ctx));
+    await _retry(() async => await execute(content, ctx: ctx));
   }
 
   /// Executes an async operation with retry logic for transient failures.
@@ -651,6 +678,10 @@ class MigrationOptions {
        assert(
          filesPattern == null || directoryBased || filesPattern.pattern.contains('(?<version>[^_]+)'),
          'filesPattern, when in file-based versioning mode, must contain a <version> variable in the regex pattern',
+       ),
+       assert(
+         filesPattern == null || filesPattern.pattern.contains('(?<dir>up|down)'),
+         'filesPattern must contain a <dir> variable in the regex pattern matching either "up" or "down"',
        );
 
   // region Properties
@@ -705,12 +736,15 @@ class MigrationOptions {
   ///
   /// Default pattern:
   /// For file-based migrations, the pattern expects versioned `.sql` files with optional suffixes
-  /// (e.g., "1.0.0.sql", "1.2.0_test.sql", "0.1.0-pre_test.sql", "0.1.0-pre-test.sql").
+  /// (e.g., "1.0.0.up.sql", "1.2.0_test.up.sql", "0.1.0-pre_test.up.sql", "0.1.0-pre-test.up.sql").
   ///
   /// For directory-based migrations, the pattern expects any `.sql` files.
   RegExp get regex =>
       filesPattern ??
-      RegExp(directoryBased ? r'[^.]+\.sql' : r'(?<version>[^_]+)([_\-][^.]+)?\.sql', caseSensitive: false);
+      RegExp(
+        directoryBased ? r'([^.]+\.)?(?<dir>up|down)\.sql' : r'(?<version>[^_]+)([_\-][^.]+)?\.(?<dir>up|down)\.sql',
+        caseSensitive: false,
+      );
 
   /// Creates a copy of this MigrationOptions instance with specified properties replaced.
   ///
@@ -825,5 +859,15 @@ enum MigrationDirection {
     if (fromVersion == to) return none;
 
     return fromVersion < to ? up : down;
+  }
+
+  /// Creates a [MigrationDirection] from a string code ('up', 'down', or 'none').
+  ///
+  /// Returns [none] if the provided code doesn't match any valid direction.
+  ///
+  /// **Parameters:**
+  /// - [code] - The string representation of the migration direction
+  factory MigrationDirection.fromCode(String code) {
+    return MigrationDirection.values.firstWhere((e) => e.name == code, orElse: () => MigrationDirection.none);
   }
 }
