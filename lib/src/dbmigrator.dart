@@ -32,7 +32,7 @@ typedef MigrationResult = ({
   DateTime started,
   DateTime completed,
   String message,
-  bool upgrade,
+  MigrationDirection direction,
   String path,
   String fromVersion,
   String toVersion,
@@ -507,7 +507,7 @@ mixin Migratable {
     final started = DateTime.now();
     if (files.isEmpty) {
       return (
-        upgrade: true,
+        direction: MigrationDirection.fromVersions(currVer, targVer),
         fromVersion: currVer?.toString() ?? '',
         toVersion: targVer.toString(),
         message: 'No migration files found to process',
@@ -544,7 +544,7 @@ mixin Migratable {
 
       final completed = DateTime.now();
       result = (
-        upgrade: currVer == null || targVer > currVer,
+        direction: MigrationDirection.fromVersions(currVer, targVer),
         fromVersion: currVer?.toString() ?? '',
         toVersion: lastVersion,
         started: started,
@@ -787,4 +787,43 @@ class MigrationChecksumMismatchError extends MigrationError {
 
   @override
   String toString() => '$message. Queried checksum: [$queried]. Calculated checksum: [$calculated]';
+}
+
+/// Represents the direction of a database migration operation.
+///
+/// Migration direction indicates whether the database schema is moving forward
+/// to a newer version ([up], upgrade) or backward to an older version ([down], downgrade).
+///
+/// **Example:**
+/// ```dart
+/// final direction = MigrationDirection.fromVersions(
+///   Version.parse('1.0.0'),
+///   Version.parse('2.0.0'),
+/// );
+/// print(direction); // MigrationDirection.up
+/// ```
+enum MigrationDirection {
+  /// Indicates an upgrade migration to a newer version.
+  up,
+
+  /// Indicates a downgrade migration to an older version.
+  down,
+
+  /// Indicates no migration due to source/target version match.
+  none;
+
+  /// Creates a [MigrationDirection] by comparing two versions.
+  ///
+  /// Returns [down] if [from] is greater than [to] (downgrade),
+  /// otherwise returns [up] (upgrade).
+  ///
+  /// **Parameters:**
+  /// - [from] - The current/starting version
+  /// - [to] - The target/destination version
+  factory MigrationDirection.fromVersions(Version? from, Version to) {
+    final fromVersion = from ?? Version.parse(Migratable.minVersion);
+    if (fromVersion == to) return none;
+
+    return fromVersion < to ? up : down;
+  }
 }

@@ -245,7 +245,7 @@ void main() {
 
     test('Executes the correct upgrade migration files', () async {
       final res = await db.migrate(version: '2.0.0');
-      expect(res.upgrade, isTrue);
+      expect(res.direction, MigrationDirection.up);
       expect(
         res.files.names(),
         containsAllInOrder(['1.2.0_test.sql', '1.2.0_test2.sql', '2.0.0-rc1.sql', '2.0.0.sql']),
@@ -254,7 +254,7 @@ void main() {
 
     test('Executes the correct downgrade migration files', () async {
       final res = await db.migrate(version: '0.0.0');
-      expect(res.upgrade, isFalse);
+      expect(res.direction, MigrationDirection.down);
       expect(
         res.files.names(),
         containsAllInOrder(['1.1.0_test.sql', '1.0.0.sql', '1.0.0-pre_test.sql', '0.1.0_test.sql', '0.0.1.sql']),
@@ -298,13 +298,13 @@ void main() {
 
     test('Executes the correct upgrade migration files', () async {
       final res = await db.migrate(version: '2.0.0');
-      expect(res.upgrade, isTrue);
+      expect(res.direction, MigrationDirection.up);
       expect(res.files.names(), containsAllInOrder(['1.2.0/empty.sql', '2.0.0-rc1/empty.sql', '2.0.0/empty.sql']));
     });
 
     test('Executes the correct downgrade migration files', () async {
       final res = await db.migrate(version: '0.0.0');
-      expect(res.upgrade, isFalse);
+      expect(res.direction, MigrationDirection.down);
       expect(
         res.files.names(),
         containsAllInOrder([
@@ -319,6 +319,16 @@ void main() {
   });
 
   group('Same local/db version checks', () {
+    test('Migrating to the same version returns none as direction', () async {
+      final db = DummyDb(
+        currentVersion: '1.1.1',
+        migrationOptions: MigrationOptions(path: './test/migrations/file-based', checksums: false),
+      );
+
+      final res = await db.migrate(version: '1.1.1');
+      expect(res.direction, MigrationDirection.none);
+    });
+
     test('Migrating to the same version with checksums disabled returns successfully with empty migrations', () async {
       final db = DummyDb(
         currentVersion: '1.1.1',
