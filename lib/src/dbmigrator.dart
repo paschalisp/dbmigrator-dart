@@ -71,6 +71,12 @@ typedef MigrationResult = ({
 /// - [acquireLock] - Acquire a migration lock for clustered environments
 /// - [releaseLock] - Release the migration lock
 ///
+/// **Important:** Lock/unlock, version queries, and migration execution
+/// must all run on the **same database connection** (session). Using a
+/// connection pool may cause advisory locks or session state to be lost
+/// between calls. Implementors should ensure a dedicated connection is
+/// used for the entire migration lifecycle.
+///
 /// **Example:**
 /// ```dart
 /// class MyDatabase with Migratable {

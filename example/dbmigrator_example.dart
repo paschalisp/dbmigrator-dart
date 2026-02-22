@@ -5,9 +5,9 @@ import 'package:dbmigrator/dbmigrator.dart';
 class MyDatabase with Migratable {
   MyDatabase({required this.migrationOptions});
 
-  // Some database connection pool your app or package uses
+  // Some database connection your app or package uses
   // Needs to be instantiated somewhere beforehand
-  final Pool? _pool;
+  final Connection? _conn = null;
 
   @override
   final MigrationOptions migrationOptions;
@@ -25,7 +25,7 @@ class MyDatabase with Migratable {
   @override
   Future<void> transaction(Future<void> Function(dynamic ctx) fn) async {
     // Create transaction context, then execute the fn inside it and wait for completion
-    await _pool.runTx(fn);
+    await _conn.runTx(fn);
   }
 
   @override
@@ -38,11 +38,18 @@ class MyDatabase with Migratable {
   Future<({String version, String checksum})?> queryVersion() async {
     // Query version (plus checksum, if enabled) from the database
     final sql = 'SELECT version, checksum FROM _version ORDER BY id DESC LIMIT 1';
-    final result = await _pool.execute(sql);
+    final result = await _conn.execute(sql);
     if (result.isEmpty) return null;
 
     final row = result.first.toColumnMap();
 
     return (version: row['version'] as String? ?? '', checksum: row['checksum'] as String? ?? '');
+  }
+
+  @override
+  Future<void> saveVersion({required MigrationResult result, ctx}) async {
+    // Store the new version to the migrations history
+    final sql = 'INSERT INTO _version (version, checksum) VALUES (?, ?)';
+    await _conn.execute(sql);
   }
 }
