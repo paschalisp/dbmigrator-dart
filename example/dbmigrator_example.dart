@@ -1,6 +1,6 @@
 import 'dart:io';
 
-import 'package:dbmigrator_base/dbmigrator_base.dart';
+import 'package:dbmigrator/dbmigrator.dart';
 
 class MyDatabase with Migratable {
   MyDatabase({required this.migrationOptions});

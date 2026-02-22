@@ -3,10 +3,11 @@ A database-agnostic foundation for building structured, version-controlled datab
 [![pub package](https://img.shields.io/pub/v/dbmigrator_base.svg)](https://pub.dev/packages/dbmigrator_base)
 [![package publisher](https://img.shields.io/pub/publisher/dbmigrator_base.svg)](https://pub.dev/packages/dbmigrator_base/publisher)
 
-This package provides the **core migration orchestration logic** — version resolution, file discovery, ordering, checksum validation,
-direction detection, and retry logic — leaving only the database-specific command execution to derived packages.
+This package provides the **core database migration orchestration logic** — current/target version resolution,
+migration files, ordering, validating file checksums, upgrade/downgrade detection, and retry logic — leaving only
+the database-specific command execution to derived packages or implementations.
 
-> **This package is not intended to be used directly by end-users.**
+> **This package is not intended to be used directly unless the migration logic requires high-level of customization.**
 > 
 > For database-specific migration tools in Dart, visit derived packages such as:
 > - [dbmigrator_psql](https://pub.dev/packages/dbmigrator_psql) - Migrations for PostgreSQL databases.
@@ -118,6 +119,7 @@ The `MigrationOptions` class accepts the following parameters:
 Apply the `Migratable` mixin to your database class and implement the required members:
 - [migrationOptions] – Configuration for migration behavior
 - [queryVersion] – Retrieve the current database version and checksum
+- [saveVersion] – Store the new version status to the database's history table
 - [transaction] – Execute operations within a database transaction
 - [execute] – Execute a command or statement against the database
 

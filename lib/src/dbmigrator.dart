@@ -16,9 +16,10 @@ import 'package:pub_semver/pub_semver.dart';
 /// - [path] - The name of the migrations directory that was processed
 /// - [fromVersion] - The database version before migration started (empty string if no prior version)
 /// - [toVersion] - The database version after migration completed
-/// - [files] - A list of migration files that were successfully executed, each containing:
+/// - [files] - The complete list of all the migration files that were successfully executed, each containing:
 ///   - `name` - The file name (with relative path from the migrations directory)
 ///   - `checksum` - The SHA-256 checksum of the file contents (if checksums are enabled)
+/// - [checksum] - The migration files' checksum of the target database version ([toVersion]). Empty if checksums are not enabled.
 ///
 /// **Example:**
 /// ```dart
@@ -35,6 +36,7 @@ typedef MigrationResult = ({
   String path,
   String fromVersion,
   String toVersion,
+  String checksum,
   List<({String name, String checksum})> files,
 });
 
@@ -60,6 +62,7 @@ typedef MigrationResult = ({
 /// Classes using this mixin must implement:
 /// - [migrationOptions] - Configuration for migration behavior
 /// - [queryVersion] - Retrieve current database version and checksum
+/// - [saveVersion] - Store the new migration history status to the database
 /// - [transaction] - Execute operations within a database transaction
 /// - [execute] - Execute a command or statement against the database
 ///
@@ -137,6 +140,38 @@ mixin Migratable {
   ///
   /// Returns a record of empty strings if no version has been set.
   Future<({String version, String checksum})?> queryVersion();
+
+  /// Commits the new database migration version to the migration history table.
+  ///
+  /// This method persists the current migration state to the database by recording
+  /// the version and checksum (if enabled) in the version tracking table. It is
+  /// executed within the same transaction as the migration file statements, just
+  /// before the transaction is committed.
+  ///
+  /// **Parameters:**
+  /// - [result] - The migration result with important information about the migration, such as the the applied target version and its checksum.
+  /// - [ctx] - The transaction context in which to execute the version update in the migration history table.
+  ///
+  /// **Implementation Notes:**
+  /// Implementors should:
+  /// - Insert or update the version record in the configured [MigrationOptions.versionTable]
+  /// - Store the current migration version and checksum (if checksums are enabled)
+  /// - Use the provided transaction context to ensure atomic execution
+  ///
+  /// **Throws:**
+  /// May throw database-specific exceptions if the version update fails.
+  ///
+  /// **Example:**
+  /// ```dart
+  /// @override
+  /// Future<void> saveVersion({dynamic ctx}) async {
+  ///   await execute(
+  ///     'UPDATE ${migrationOptions.versionTable} SET version = ?, checksum = ?',
+  ///     ctx: ctx,
+  ///   );
+  /// }
+  /// ```
+  Future<void> saveVersion({required MigrationResult result, dynamic ctx});
 
   /// Executes a command or statement within a transaction context.
   ///
@@ -471,6 +506,7 @@ mixin Migratable {
         completed: DateTime.now(),
         path: path,
         files: <({String name, String checksum})>[],
+        checksum: '',
       );
     }
     // endregion
@@ -478,8 +514,13 @@ mixin Migratable {
     final executed = <({String name, String checksum})>[];
 
     String lastVersion = '';
+    String lastChecksum = '';
+    late final MigrationResult result;
+
     await transaction((ctx) async {
       for (final version in files.keys) {
+        lastChecksum = files[version]!.checksum();
+
         for (var file in files[version]!) {
           if (migrationOptions.directoryBased) file = (name: '$version/${file.name}', checksum: file.checksum);
           try {
@@ -491,20 +532,25 @@ mixin Migratable {
           }
         }
       }
+
+      final completed = DateTime.now();
+      result = (
+        upgrade: currVer == null || targVer > currVer,
+        fromVersion: currVer?.toString() ?? '',
+        toVersion: lastVersion,
+        started: started,
+        completed: completed,
+        message: 'Migrated from $currVer ➡ $targVer in ${completed.difference(started).inSeconds} seconds.',
+        path: path,
+        files: executed,
+        checksum: migrationOptions.checksums ? lastChecksum : '',
+      );
+
+      // Save the new version to the migration history table
+      await saveVersion(result: result, ctx: ctx);
     });
 
-    final completed = DateTime.now();
-
-    return (
-      upgrade: currVer == null || targVer > currVer,
-      fromVersion: currVer?.toString() ?? '',
-      toVersion: lastVersion,
-      started: started,
-      completed: completed,
-      message: 'Migrated from $currVer ➡ $targVer in ${completed.difference(started).inSeconds} seconds.',
-      path: path,
-      files: executed,
-    );
+    return result;
   }
 
   /// Processes (executes all statements in) a migration file within the context
@@ -687,6 +733,9 @@ class MigrationOptions {
 extension NameChecksumListExtensions on List<({String name, String checksum})> {
   /// Calculates and returns a combined SHA-256 checksum of all version checksums in the list.
   String checksum() {
+    // If the list contains only one file, return the file's checksum
+    if (length == 1) return first.checksum;
+
     final bytes = utf8.encode(map((e) => e.name).join('\n'));
     return sha256.convert(bytes).toString();
   }

@@ -1,9 +1,8 @@
-import 'package:dbmigrator_base/dbmigrator_base.dart';
+import 'package:dbmigrator/dbmigrator.dart';
 import 'package:test/test.dart';
 
 void main() {
   const String select1Checksum = '17db4fd369edb9244b9f91d9aeed145c3d04ad8ba6e95d06247f07a63527d11a';
-  const String v111Checksum = '6c024c2720d15a453119b89c9f5a68b60084b7a7ad3aadcb17a079d822b060cd';
 
   group('Migration options model checks', () {
     test('Default lockKey is correct when no schema is given', () {
@@ -241,7 +240,7 @@ void main() {
   group('File-based migrations execution', () {
     final db = DummyDb(
       currentVersion: '1.1.1',
-      migrationOptions: MigrationOptions(path: './test/migrations/file-based', checksums: false),
+      migrationOptions: MigrationOptions(path: './test/migrations/file-based', checksums: true),
     );
 
     test('Executes the correct upgrade migration files', () async {
@@ -260,6 +259,24 @@ void main() {
         res.files.names(),
         containsAllInOrder(['1.1.0_test.sql', '1.0.0.sql', '1.0.0-pre_test.sql', '0.1.0_test.sql', '0.0.1.sql']),
       );
+    });
+
+    test('Calls saveVersion() before committing the transaction', () async {
+      final db = DummyDb(
+        currentVersion: '1.1.1',
+        migrationOptions: MigrationOptions(path: './test/migrations/file-based', checksums: false),
+        commitCallback: () => throw UnsupportedError('callback called'),
+      );
+
+      expect(() async => await db.migrate(version: '2.0.0'), throwsA(isA<UnsupportedError>()));
+    });
+
+    test('Returns the correct migration results', () async {
+      final res = await db.migrate(version: '2.0.0');
+      expect(res.fromVersion, '1.1.1');
+      expect(res.toVersion, '2.0.0');
+      expect(res.path, isNotEmpty);
+      expect(res.checksum, select1Checksum);
     });
   });
 
@@ -305,7 +322,7 @@ void main() {
     test('Migrating to the same version with matching checksums returns successfully with empty migrations', () async {
       final db = DummyDb(
         currentVersion: '1.1.1',
-        currentChecksum: v111Checksum,
+        currentChecksum: select1Checksum,
         migrationOptions: MigrationOptions(path: './test/migrations/file-based', checksums: true),
       );
 
@@ -329,10 +346,16 @@ void main() {
 }
 
 class DummyDb with Migratable {
-  const DummyDb({required this.currentVersion, required this.migrationOptions, this.currentChecksum = ''});
+  const DummyDb({
+    required this.currentVersion,
+    required this.migrationOptions,
+    this.currentChecksum = '',
+    this.commitCallback,
+  });
 
   final String currentVersion;
   final String currentChecksum;
+  final Function()? commitCallback;
 
   @override
   final MigrationOptions migrationOptions;
@@ -340,6 +363,11 @@ class DummyDb with Migratable {
   @override
   Future<({String version, String checksum})> queryVersion() async =>
       (version: currentVersion, checksum: currentChecksum);
+
+  @override
+  Future<void> saveVersion({required MigrationResult result, ctx, Function()? callback}) async {
+    (callback ?? commitCallback)?.call();
+  }
 
   @override
   Future<dynamic> execute(Object stmt, {ctx}) async {
