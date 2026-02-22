@@ -271,6 +271,16 @@ void main() {
       expect(() async => await db.migrate(version: '2.0.0'), throwsA(isA<UnsupportedError>()));
     });
 
+    test('Does not call saveVersion() if targeting the current version', () async {
+      final db = DummyDb(
+        currentVersion: '1.1.1',
+        migrationOptions: MigrationOptions(path: './test/migrations/file-based', checksums: false),
+        commitCallback: () => throw UnsupportedError('callback called'),
+      );
+
+      expect(() async => await db.migrate(version: '1.1.1'), isA<Function>());
+    });
+
     test('Returns the correct migration results', () async {
       final res = await db.migrate(version: '2.0.0');
       expect(res.fromVersion, '1.1.1');
