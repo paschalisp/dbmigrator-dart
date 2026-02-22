@@ -177,7 +177,7 @@ mixin Migratable {
   ///   );
   /// }
   /// ```
-  Future<void> saveVersion({required MigrationResult result, dynamic ctx});
+  Future<void> saveVersion({required MigrationResult result, dynamic ctx, String? comment});
 
   /// Executes a command or statement within a transaction context.
   ///
@@ -396,6 +396,7 @@ mixin Migratable {
   /// - [current] - Optional current database version and checksum. If not provided,
   ///   will be queried using [queryVersion].
   /// - [ctx] - The database transaction context in which all migration executions will run through.
+  /// - [comment] - A comment to optionally add to the migration history table.
   ///
   /// **Returns:**
   /// A record containing:
@@ -430,6 +431,7 @@ mixin Migratable {
     required String version,
     ({String version, String checksum})? current,
     dynamic ctx,
+    String? comment,
   }) async {
     await _retry(() => acquireLock());
     try {
@@ -447,6 +449,7 @@ mixin Migratable {
     required String version,
     ({String version, String checksum})? current,
     dynamic ctx,
+    String? comment,
   }) async {
     late final Version? currVer;
     late final Version targVer;
@@ -553,7 +556,7 @@ mixin Migratable {
       );
 
       // Save the new version to the migration history table
-      await saveVersion(result: result, ctx: ctx);
+      await saveVersion(result: result, ctx: ctx, comment: comment);
     });
 
     return result;

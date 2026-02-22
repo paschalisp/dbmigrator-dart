@@ -375,7 +375,7 @@ class DummyDb with Migratable {
       (version: currentVersion, checksum: currentChecksum);
 
   @override
-  Future<void> saveVersion({required MigrationResult result, ctx, Function()? callback}) async {
+  Future<void> saveVersion({required MigrationResult result, ctx, String? comment, Function()? callback}) async {
     (callback ?? commitCallback)?.call();
   }
 

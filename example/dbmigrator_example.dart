@@ -47,9 +47,9 @@ class MyDatabase with Migratable {
   }
 
   @override
-  Future<void> saveVersion({required MigrationResult result, ctx}) async {
+  Future<void> saveVersion({required MigrationResult result, ctx, String? comment}) async {
     // Store the new version to the migrations history
-    final sql = 'INSERT INTO _version (version, checksum) VALUES (?, ?)';
+    final sql = 'INSERT INTO _version (version, checksum, comment) VALUES (?, ?, ?)';
     await _conn.execute(sql);
   }
 }
