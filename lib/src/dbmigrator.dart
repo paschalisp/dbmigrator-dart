@@ -314,7 +314,7 @@ mixin Migratable {
             if ((currVer != null && ver <= currVer) || ver > targVer) continue;
           } else if (direction == MigrationDirection.down) {
             // Not interested in versions newer than the current, neither older than the target
-            if (currVer == null || ver >= currVer || ver < targVer) continue;
+            if (currVer == null || ver > currVer || ver <= targVer) continue;
           } else {
             if (ver != targVer) continue;
           }
@@ -348,7 +348,11 @@ mixin Migratable {
 
           versions[ver] = (versions[ver] ?? [])
             ..addAll(files)
-            ..sort((a, b) => a.name.compareTo(b.name));
+            ..sort(
+              direction == MigrationDirection.down
+                  ? (a, b) => b.name.compareTo(a.name)
+                  : (a, b) => a.name.compareTo(b.name),
+            );
         } catch (_) {}
       }
     } else {
@@ -379,7 +383,7 @@ mixin Migratable {
             if ((currVer != null && ver <= currVer) || ver > targVer) continue;
           } else if (direction == MigrationDirection.down) {
             // Not interested in versions newer than the current, neither older than the target
-            if (currVer == null || ver >= currVer || ver < targVer) continue;
+            if (currVer == null || ver > currVer || ver <= targVer) continue;
           } else {
             if (ver != targVer) continue;
           }

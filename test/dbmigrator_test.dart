@@ -140,6 +140,20 @@ void main() {
       expect(versions['2.0.0-rc1']?.names(), containsAllInOrder(['2.0.0-rc1.up.sql']));
       expect(versions['2.0.0']?.names(), containsAllInOrder(['2.0.0.up.sql']));
     });
+
+    test('Returns the correct downgrade files per version', () async {
+      final versions = await db.queryMigrationFiles(
+        '1.0.0',
+        current: (version: '2.0.0', checksum: ''),
+        direction: MigrationDirection.down,
+      );
+
+      expect(versions.keys.toList(), containsAllInOrder(['2.0.0', '2.0.0-rc1', '1.2.0', '1.1.1', '1.1.0']));
+      expect(versions['2.0.0']?.names(), containsAllInOrder(['2.0.0.down.sql']));
+      expect(versions['1.2.0']?.names(), containsAllInOrder(['1.2.0_test.down.sql', '1.2.0_test2.down.sql']));
+      expect(versions['1.1.1']?.names(), containsAllInOrder(['1.1.1_test.down.sql']));
+      expect(versions['1.1.0']?.names(), containsAllInOrder(['1.1.0_test.down.sql']));
+    });
   });
 
   group('Directory-based migration version checks', () {
@@ -232,6 +246,20 @@ void main() {
       expect(versions['1.1.1']?.names(), containsAllInOrder(['a.up.sql', 'b.up.sql', 'c.up.sql']));
       expect(versions['1.2.0']?.names(), containsAllInOrder(['up.sql']));
       expect(versions['2.0.0']?.names(), containsAllInOrder(['up.sql']));
+    });
+
+    test('Returns the correct downgrade files per version', () async {
+      final versions = await db.queryMigrationFiles(
+        '1.0.0',
+        current: (version: '2.0.0', checksum: ''),
+        direction: MigrationDirection.down,
+      );
+
+      expect(versions.keys.toList(), containsAllInOrder(['2.0.0', '2.0.0-rc1', '1.2.0', '1.1.1']));
+      expect(versions['2.0.0']?.names(), containsAllInOrder(['down.sql']));
+      expect(versions['1.2.0']?.names(), containsAllInOrder(['down.sql']));
+      expect(versions['1.1.1']?.names(), containsAllInOrder(['c.down.sql', 'b.down.sql', 'a.down.sql']));
+      expect(versions['1.1.0']?.names(), containsAllInOrder(['down.sql']));
     });
   });
 
