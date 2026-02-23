@@ -1,5 +1,5 @@
 name: dbmigrator
-description: A database-agnostic foundation for building structured database migration tools in Dart.
+description: A database-agnostic database migration framework for building file-based migration tools and solutions in Dart.
 version: 0.1.2
 repository: https://github.com/paschalisp/dbmigrator-dart
 homepage: https://github.com/paschalisp/dbmigrator-dart

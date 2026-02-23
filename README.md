@@ -1,4 +1,4 @@
-A database-agnostic migration framework for building structured, version-controlled database migration tools in Dart.
+A database-agnostic database migration framework for building file-based migration tools and solutions in Dart.
 
 [![pub package](https://img.shields.io/pub/v/dbmigrator.svg)](https://pub.dev/packages/dbmigrator)
 [![package publisher](https://img.shields.io/pub/publisher/dbmigrator.svg)](https://pub.dev/packages/dbmigrator/publisher)
@@ -212,7 +212,7 @@ void main() async {
   // - current version is queried automatically (if not explicitly provided)
   // - direction is detected automatically
   final result = await db.migrate(version: '2.0.0');
-  print(result.message); // "Migrated from 2.0.0 ➡ 3.0.0-alpha in 3 seconds."
+  print(result.message); // "Migrated from 1.0.0 ➡ 2.0.0 in 3 seconds."
 }
 ```
 
