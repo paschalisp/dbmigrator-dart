@@ -156,6 +156,61 @@ void main() {
     });
   });
 
+  group('queryMigrationFiles modes', () {
+    final db = DummyDb(
+      currentVersion: '',
+      migrationOptions: MigrationOptions(path: './test/migrations/file-based', checksums: false),
+    );
+
+    test('none with a newer target behaves as up', () async {
+      final v = await db.queryMigrationFiles(
+        '1.0.0',
+        current: (version: '0.1.0', checksum: ''),
+        direction: MigrationDirection.none,
+      );
+      expect(v.keys.toList(), ['1.0.0-pre', '1.0.0']);
+    });
+
+    test('none with an older target behaves as down', () async {
+      final v = await db.queryMigrationFiles(
+        '1.0.0',
+        current: (version: '1.1.0', checksum: ''),
+        direction: MigrationDirection.none,
+      );
+      expect(v.keys.toList(), ['1.1.0']);
+    });
+
+    test('none with the same version returns empty', () async {
+      final v = await db.queryMigrationFiles(
+        '1.0.0',
+        current: (version: '1.0.0', checksum: ''),
+        direction: MigrationDirection.none,
+      );
+      expect(v, isEmpty);
+    });
+
+    test('up without target returns everything newer than current', () async {
+      final v = await db.queryMigrationFiles('', current: (version: '1.2.0', checksum: ''));
+      expect(v.keys.toList(), ['2.0.0-rc1', '2.0.0']);
+    });
+
+    test('down without target returns everything down to the oldest', () async {
+      final v = await db.queryMigrationFiles(
+        '',
+        current: (version: '0.1.0', checksum: ''),
+        direction: MigrationDirection.down,
+      );
+      expect(v.keys.toList(), ['0.1.0', '0.0.1']);
+    });
+
+    test('none without target lists all versions with up and down files', () async {
+      final v = await db.queryMigrationFiles('', direction: MigrationDirection.none);
+      expect(v.keys.first, '0.0.1');
+      expect(v.keys.last, '2.0.0');
+      expect(v['1.2.0']?.names(), containsAll(['1.2.0_test.up.sql', '1.2.0_test.down.sql']));
+    });
+  });
+
   group('Directory-based migration version checks', () {
     final db = DummyDb(
       currentVersion: '',
@@ -279,17 +334,11 @@ void main() {
     });
 
     test('Executes the correct downgrade migration files', () async {
-      final res = await db.migrate(version: '0.0.0');
+      final res = await db.migrate(version: '0.0.1');
       expect(res.direction, MigrationDirection.down);
       expect(
         res.files.names(),
-        containsAllInOrder([
-          '1.1.0_test.down.sql',
-          '1.0.0.down.sql',
-          '1.0.0-pre_test.down.sql',
-          '0.1.0_test.down.sql',
-          '0.0.1.down.sql',
-        ]),
+        containsAllInOrder(['1.1.0_test.down.sql', '1.0.0.down.sql', '1.0.0-pre_test.down.sql', '0.1.0_test.down.sql']),
       );
     });
 
@@ -335,17 +384,11 @@ void main() {
     });
 
     test('Executes the correct downgrade migration files', () async {
-      final res = await db.migrate(version: '0.0.0');
+      final res = await db.migrate(version: '0.0.1');
       expect(res.direction, MigrationDirection.down);
       expect(
         res.files.names(),
-        containsAllInOrder([
-          '1.1.0/down.sql',
-          '1.0.0/down.sql',
-          '1.0.0-pre/down.sql',
-          '0.1.0/down.sql',
-          '0.0.1/down.sql',
-        ]),
+        containsAllInOrder(['1.1.0/down.sql', '1.0.0/down.sql', '1.0.0-pre/down.sql', '0.1.0/down.sql']),
       );
     });
   });
@@ -394,6 +437,119 @@ void main() {
         expect(() async => await db.migrate(version: '1.1.1'), throwsA(isA<MigrationChecksumMismatchError>()));
       },
     );
+  });
+
+  group('Strict target version', () {
+    final db = DummyDb(
+      currentVersion: '1.0.0',
+      migrationOptions: MigrationOptions(path: './test/migrations/file-based', checksums: false),
+    );
+
+    test('Fails early when the target version does not exist', () async {
+      expect(() => db.migrate(version: '9.9.9'), throwsA(isA<MigrationInvalidVersionError>()));
+    });
+
+    test('Fails when neither version nor latest is given', () async {
+      expect(() => db.migrate(), throwsA(isA<MigrationInvalidVersionError>()));
+    });
+
+    test('Fails when both version and latest are given', () async {
+      expect(() => db.migrate(version: '1.0.0', latest: true), throwsA(isA<MigrationInvalidVersionError>()));
+    });
+
+    test('latest migrates to the newest existing version and records it', () async {
+      final res = await db.migrate(latest: true);
+      expect(res.toVersion, '2.0.0');
+      expect(res.direction, MigrationDirection.up);
+    });
+
+    test('Downgrade records the target version', () async {
+      final res = await db.migrate(version: '0.1.0');
+      expect(res.toVersion, '0.1.0');
+      expect(res.direction, MigrationDirection.down);
+    });
+  });
+
+  group('natural version sorting checks', () {
+    test('identical strings are equal', () {
+      expect(naturalCompare('1_init.up.sql', '1_init.up.sql'), 0);
+      expect(naturalCompare('', ''), 0);
+    });
+
+    test('empty string sorts first', () {
+      expect(naturalCompare('', 'a'), isNegative);
+      expect(naturalCompare('a', ''), isPositive);
+    });
+
+    test('digit runs compare numerically', () {
+      expect(naturalCompare('2_x', '10_x'), isNegative);
+      expect(naturalCompare('10_x', '2_x'), isPositive);
+      expect(naturalCompare('file9', 'file10'), isNegative);
+    });
+
+    test('very long digit runs do not overflow', () {
+      expect(naturalCompare('99999999999999999999999', '100000000000000000000000'), isNegative);
+      expect(naturalCompare('100000000000000000000000', '99999999999999999999999'), isPositive);
+    });
+
+    test('letters compare alphabetically', () {
+      expect(naturalCompare('a_x', 'b_x'), isNegative);
+      expect(naturalCompare('b_x', 'a_x'), isPositive);
+    });
+
+    test('letters compare case-insensitively first', () {
+      expect(naturalCompare('A_x', 'b_x'), isNegative);
+      expect(naturalCompare('b_x', 'A_x'), isPositive);
+    });
+
+    test('case-only differences are ordered deterministically, never equal', () {
+      final c = naturalCompare('a', 'A');
+      expect(c, isNot(0));
+      expect(naturalCompare('A', 'a'), c.isNegative ? isPositive : isNegative);
+    });
+
+    test('leading zeros are numerically equal but ordered deterministically', () {
+      expect(naturalCompare('01', '1'), isNot(0));
+      expect(naturalCompare('01', '2'), isNegative);
+      expect(naturalCompare('02', '10'), isNegative);
+    });
+
+    test('a prefix sorts before a longer string', () {
+      expect(naturalCompare('a', 'a1'), isNegative);
+      expect(naturalCompare('a1', 'a'), isPositive);
+      expect(naturalCompare('1', '1_x'), isNegative);
+    });
+
+    test('digits and non-digits are compared as strings', () {
+      expect(naturalCompare('1', 'a'), isNegative);
+      expect(naturalCompare('a', '1'), isPositive);
+      expect(naturalCompare('1', '-'), isPositive);
+    });
+
+    test('multiple digit runs are compared left to right', () {
+      expect(naturalCompare('1.2.10', '1.2.9'), isPositive);
+      expect(naturalCompare('1.10.0', '1.9.9'), isPositive);
+      expect(naturalCompare('2.0.0', '10.0.0'), isNegative);
+    });
+
+    test('is antisymmetric', () {
+      const samples = ['', 'a', 'A', 'a1', 'a01', 'a2', 'a10', '1', '01', '10', '_x', '1_x.up.sql'];
+      for (final a in samples) {
+        for (final b in samples) {
+          expect(naturalCompare(a, b).sign, -naturalCompare(b, a).sign, reason: '$a vs $b');
+        }
+      }
+    });
+
+    test('sorts a mixed list in natural order', () {
+      final list = ['10_x', '2_x', '1_x', 'b_x', 'a_x', '20_x', '3_x']..sort(naturalCompare);
+      expect(list, ['1_x', '2_x', '3_x', '10_x', '20_x', 'a_x', 'b_x']);
+    });
+
+    test('sorts letter-prefixed names', () {
+      final list = ['c_seed.up.sql', 'a_create.up.sql', 'b_index.up.sql']..sort(naturalCompare);
+      expect(list, ['a_create.up.sql', 'b_index.up.sql', 'c_seed.up.sql']);
+    });
   });
 }
 

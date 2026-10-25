@@ -101,9 +101,26 @@ migrations/ (or a custom directory name)
 | Current version > target version | **Downgrade** — executes migration files from current → target (reverse order). |
 | Current version = target version | **No-op** — verifies checksums (if enabled) and returns.                        |
 
+### How versioning works
+
+- Versions are semantic versions (`pub_semver`), including pre-release and build metadata (e.g. `1.0.0-pre`, `1.0.0+1`).
+  Names that look like versions but are not valid semver (e.g. `1.0`, `v1.0.0`) are skipped and listed in the result's `message`.
+- The target version **must exist**, i.e. at least one migration file (`up` or `down`) must belong to it. Otherwise
+  `migrate()` throws `MigrationInvalidVersionError` before locking or executing anything.
+  Use `migrate(latest: true)` to migrate to the newest existing version.
+- An upgrade runs every `up` file with `current < version <= target`; a downgrade runs the `down` files with
+  `target < version <= current`.
+- The version **recorded** is always the target version, which is guaranteed to exist on disk.
+- Files within a version run in natural order (`2_x` before `10_x`, `a_` before `b_`); in directory-based mode downgrades run a version's files in reverse.
+- An `up` file doesn't need a matching `down` file; missing ones are simply not run.
+- Empty or whitespace-only files are skipped.
+- Failed files are retried (only when `isRetryable` returns `true`) up to `retries` times.
+- If `ctx` is passed to `migrate()`, it is used for all executions instead of opening a new transaction.
+
 ### Checksum verification
 
-When `checksums: true`, the migrator computes an SHA-256 hash of each migration file's contents.
+When `checksums: true`, the migrator computes an SHA-256 hash of each migration file's contents (ignoring BOM and
+CRLF/LF differences). For versions with multiple files, the version checksum combines the names and contents of all its files.
 If the current and target versions are the same, the stored checksum is compared against the calculated one.
 A mismatch raises `MigrationChecksumMismatchError`.
 

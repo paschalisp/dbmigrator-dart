@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:crypto/crypto.dart';
+import 'package:path/path.dart' as p;
 import 'package:pub_semver/pub_semver.dart';
 
 /// The result record returned after executing a database migration.
@@ -234,15 +235,11 @@ mixin Migratable {
   // endregion
 
   // region Migration directory querying methods
-  /// Returns a list of available migration versions found in the migrations directory
-  /// that are older or newer than the provided [targetVersions], along with each version's checksum (if enabled).
-  ///
-  /// - [direction] - If [MigrationDirection.up], will return versions that are older than the target version (upgradable);
-  ///   if [MigrationDirection.down], will return versions that are newer (downgradable) than the target version;
-  ///   if [MigrationDirection.none], will return the target version.
+  /// Returns a list of available migration versions found in the migrations directory,
+  /// along with each version's checksum (if enabled). See [queryMigrationFiles] for the meaning of the parameters.
   ///
   /// Returns a list of available migration versions and their checksums (if enabled),
-  /// sorted either from oldest to newest (upgradable) or newest to oldest (downgradable), empty if none found.
+  /// sorted from oldest to newest, or newest to oldest if downgrading. Empty if none found.
   Future<List<({String name, String checksum})>> queryMigrationVersions(
     String targetVersions, {
     ({String version, String checksum})? current,
@@ -253,49 +250,74 @@ mixin Migratable {
     return versions.keys.map((v) => (name: v, checksum: versions[v]!.checksum())).toList();
   }
 
-  /// Returns a list of available migrations found in the migrations directory
-  /// that are newer or older than the provided [targetVersion].
+  /// Returns the available migration files found in the migrations directory, grouped by version.
   ///
-  /// - [targetVersion] - The target version to check upgrades from
-  /// - [direction] - If [MigrationDirection.up], will return migration files that are older than the target version (upgradable);
-  ///   if [MigrationDirection.down], will return migration files that are newer (downgradable) than the target version;
-  ///   if [MigrationDirection.none], will return migration files that belong to the target version.
+  /// - [targetVersion] - The version to migrate to. If empty, there is no target boundary.
+  /// - [current] - The current database version. If not provided, it is queried using [queryVersion].
+  /// - [direction]:
+  ///   - [MigrationDirection.up]: `up` files with `current < version <= target`
+  ///     (or every version newer than current if [targetVersion] is empty).
+  ///   - [MigrationDirection.down]: `down` files with `target < version <= current`
+  ///     (or every version down to the oldest if [targetVersion] is empty).
+  ///   - [MigrationDirection.none] with a [targetVersion]: auto-mode; behaves as `up` if the target is newer than
+  ///     current, as `down` if older, and returns an empty map if equal.
+  ///   - [MigrationDirection.none] without a [targetVersion]: lists every version, with both `up` and `down`
+  ///     files, without checksums, and ignoring [current].
   ///
-  /// Returns a map of available migration files with the key containing their version, empty if none found.
-  /// Keys (versions) are sorted either from oldest to newest (upgradable) or newest to oldest (downgradable).
+  /// Returns a map of migration files with the version as key, empty if none found.
+  /// Keys (versions) are sorted from oldest to newest, or newest to oldest for downgrades;
+  /// files within a version are sorted in natural order.
   Future<Map<String, List<({String name, String checksum})>>> queryMigrationFiles(
     String targetVersion, {
     ({String version, String checksum})? current,
     MigrationDirection direction = MigrationDirection.up,
+    List<String>? skipped,
   }) async {
     // Check if migrations directory exists
     final dir = Directory(migrationOptions.path);
     if (!await dir.exists()) return {};
 
-    // Check if target version is valid
-    late final Version? currVer;
-    late final Version targVer;
+    Version? currVer;
+    Version? targVer;
 
-    current = current ?? await _retry(() => queryVersion());
-    try {
-      currVer = (current?.version ?? '').isNotEmpty ? Version.parse(current!.version) : null;
-    } catch (_) {
-      throw MigrationInvalidVersionError(
-        message: 'Current version "${current!.version}" has not a valid version format.',
-      );
-    }
-    try {
-      targVer = targetVersion.isNotEmpty ? Version.parse(targetVersion) : Version.parse('-1');
-    } catch (_) {
-      throw MigrationInvalidVersionError(message: 'Target version "$targetVersion" has not a valid version format.');
+    // No target with [MigrationDirection.none] lists all versions, of any direction
+    final listAll = direction == MigrationDirection.none && targetVersion.isEmpty;
+
+    if (!listAll) {
+      current = current ?? await _retry(() => queryVersion());
+      try {
+        currVer = (current?.version ?? '').isNotEmpty ? Version.parse(current!.version) : null;
+      } catch (_) {
+        throw MigrationInvalidVersionError(
+          message: 'Current version "${current!.version}" has not a valid version format.',
+        );
+      }
+      if (targetVersion.isNotEmpty) {
+        try {
+          targVer = Version.parse(targetVersion);
+        } catch (_) {
+          throw MigrationInvalidVersionError(message: 'Target version "$targetVersion" has not a valid version format.');
+        }
+      }
     }
 
-    if (direction == MigrationDirection.up) {
-      // Return empty if current already newer than target
-      if (currVer != null && targVer <= currVer) return {};
-    } else if (direction == MigrationDirection.down) {
-      // Return empty if current already older than target
-      if (currVer == null || targVer >= currVer) return {};
+    // Auto-mode: identify the direction by comparing the current and target versions
+    if (direction == MigrationDirection.none && targVer != null) {
+      if (currVer != null && currVer == targVer) return {};
+      direction = (currVer == null || currVer < targVer) ? MigrationDirection.up : MigrationDirection.down;
+    }
+
+    if (direction == MigrationDirection.down && currVer == null) return {};
+    if (direction == MigrationDirection.up && targVer != null && currVer != null && targVer <= currVer) return {};
+    if (direction == MigrationDirection.down && targVer != null && targVer >= currVer!) return {};
+
+    // Whether a version lies within the requested range
+    bool inRange(Version ver) {
+      if (listAll) return true;
+      if (direction == MigrationDirection.up) {
+        return (currVer == null || ver > currVer) && (targVer == null || ver <= targVer);
+      }
+      return ver <= currVer! && (targVer == null || ver > targVer);
     }
 
     final versions = <Version, List<({String name, String checksum})>>{};
@@ -305,61 +327,56 @@ mixin Migratable {
       await for (final file in dir.list()) {
         // We're only looking for versioned directories; ignore files
         if (file is! Directory) continue;
-        final versionStr = file.path.split('/').last;
+        final versionStr = p.basename(file.path);
 
+        final Version ver;
         try {
-          final ver = Version.parse(versionStr);
-          if (direction == MigrationDirection.up) {
-            // Not interested in versions older than the current, neither newer than the target
-            if ((currVer != null && ver <= currVer) || ver > targVer) continue;
-          } else if (direction == MigrationDirection.down) {
-            // Not interested in versions newer than the current, neither older than the target
-            if (currVer == null || ver > currVer || ver <= targVer) continue;
-          } else {
-            if (ver != targVer) continue;
+          ver = Version.parse(versionStr);
+        } on FormatException {
+          if (_looksLikeVersion(versionStr)) skipped?.add(versionStr);
+          continue;
+        }
+
+        if (!inRange(ver)) continue;
+
+        final files = <({String name, String checksum})>[];
+
+        await for (final item in file.list()) {
+          // We're only looking for files; ignore directories
+          if (item is! File) continue;
+          final name = p.basename(item.path);
+
+          // Check file's name and extract its version info
+          final match = migrationOptions.regex.firstMatch(name);
+          if (match == null) continue;
+
+          final dir = match.namedGroup('dir');
+          if (!_matchesDirection(dir, direction, listAll)) continue;
+
+          String checksum = '';
+          if (migrationOptions.checksums && !listAll) {
+            checksum = await _fileChecksum(item);
           }
 
-          final files = <({String name, String checksum})>[];
+          files.add((name: name, checksum: checksum));
+        }
 
-          await for (final item in file.list()) {
-            // We're only looking for files; ignore directories
-            if (item is! File) continue;
-            final name = item.path.split('/').last;
+        // Versions without any matching file don't exist
+        if (files.isEmpty) continue;
 
-            // Check file's name and extract its version info
-            final match = migrationOptions.regex.firstMatch(name);
-            if (match == null) continue;
-
-            final dir = match.namedGroup('dir');
-            if (direction != MigrationDirection.none) {
-              if (dir == null || MigrationDirection.fromCode(dir) != direction) continue;
-            } else {
-              // If direction is none, then consider upgrade files
-              if (dir == null || MigrationDirection.up != direction) continue;
-            }
-
-            String checksum = '';
-            if (migrationOptions.checksums) {
-              checksum = sha256.convert(await item.readAsBytes()).toString();
-            }
-
-            files.add((name: name, checksum: checksum));
-          }
-
-          versions[ver] = (versions[ver] ?? [])
-            ..addAll(files)
-            ..sort(
-              direction == MigrationDirection.down
-                  ? (a, b) => b.name.compareTo(a.name)
-                  : (a, b) => a.name.compareTo(b.name),
-            );
-        } catch (_) {}
+        versions[ver] = (versions[ver] ?? [])
+          ..addAll(files)
+          ..sort(
+            direction == MigrationDirection.down
+                ? (a, b) => naturalCompare(b.name, a.name)
+                : (a, b) => naturalCompare(a.name, b.name),
+          );
       }
     } else {
       await for (final file in dir.list()) {
         // We're only looking for files; ignore directories
         if (file is! File) continue;
-        final name = file.path.split('/').last;
+        final name = p.basename(file.path);
 
         // Check file's name and extract its version info
         final match = migrationOptions.regex.firstMatch(name);
@@ -368,39 +385,30 @@ mixin Migratable {
         final versionStr = match.namedGroup('version');
         if (versionStr == null) continue;
 
-        final dir = match.namedGroup('dir');
-        if (direction != MigrationDirection.none) {
-          if (dir == null || MigrationDirection.fromCode(dir) != direction) continue;
-        } else {
-          // If direction is none, then consider upgrade files
-          if (dir == null || MigrationDirection.up != direction) continue;
+        if (!_matchesDirection(match.namedGroup('dir'), direction, listAll)) continue;
+
+        final Version ver;
+        try {
+          ver = Version.parse(versionStr);
+        } on FormatException {
+          skipped?.add(name);
+          continue;
         }
 
-        try {
-          final ver = Version.parse(versionStr);
-          if (direction == MigrationDirection.up) {
-            // Not interested in versions older than the current, neither newer than the target
-            if ((currVer != null && ver <= currVer) || ver > targVer) continue;
-          } else if (direction == MigrationDirection.down) {
-            // Not interested in versions newer than the current, neither older than the target
-            if (currVer == null || ver > currVer || ver <= targVer) continue;
-          } else {
-            if (ver != targVer) continue;
-          }
+        if (!inRange(ver)) continue;
 
-          String checksum = '';
-          if (migrationOptions.checksums) {
-            checksum = sha256.convert(await file.readAsBytes()).toString();
-          }
+        String checksum = '';
+        if (migrationOptions.checksums && !listAll) {
+          checksum = await _fileChecksum(file);
+        }
 
-          versions[ver] = (versions[ver] ?? [])
-            ..add((name: name, checksum: checksum))
-            ..sort((a, b) => a.name.compareTo(b.name));
-        } catch (_) {}
+        versions[ver] = (versions[ver] ?? [])
+          ..add((name: name, checksum: checksum))
+          ..sort((a, b) => naturalCompare(a.name, b.name));
       }
     }
 
-    final sortFn = (direction == MigrationDirection.up) ? (a, b) => a.compareTo(b) : (a, b) => b.compareTo(a);
+    final sortFn = (direction == MigrationDirection.down) ? (a, b) => b.compareTo(a) : (a, b) => a.compareTo(b);
 
     // Return properly sorted map entries
     return Map.fromEntries(
@@ -417,7 +425,10 @@ mixin Migratable {
   /// version with the target version and executing the appropriate migration files.
   ///
   /// **Parameters:**
-  /// - [version] - The target version to migrate to. Defaults to an empty string.
+  /// - [version] - The target version to migrate to. It must be an existing version, i.e. one having
+  ///   at least one migration file (`up` or `down`), otherwise [MigrationInvalidVersionError] is thrown
+  ///   before anything is executed.
+  /// - [latest] - If `true`, migrates to the newest existing version. [version] must then be left empty.
   /// - [current] - Optional current database version and checksum. If not provided,
   ///   will be queried using [queryVersion].
   /// - [ctx] - The database transaction context in which all migration executions will run through.
@@ -444,7 +455,7 @@ mixin Migratable {
   ///   [MigrationOptions.retryDelay] options
   ///
   /// **Throws:**
-  /// - [MigrationInvalidVersionError] if current or target version format is invalid
+  /// - [MigrationInvalidVersionError] if current or target version format is invalid, or the target version doesn't exist
   /// - [MigrationError] if any migration file execution fails
   ///
   /// **Example:**
@@ -453,14 +464,21 @@ mixin Migratable {
   /// print(result.message); // "Migrated 5 files in 3 seconds."
   /// ```
   Future<MigrationResult> migrate({
-    required String version,
+    String version = '',
+    bool latest = false,
     ({String version, String checksum})? current,
     dynamic ctx,
     String? comment,
   }) async {
+    // Fail early, before locking, if the target version doesn't exist
+    final target = (await queryMigrationFiles('', direction: MigrationDirection.none)).resolveTarget(
+      version,
+      latest: latest,
+    );
+
     await _retry(() => acquireLock());
     try {
-      return await _migrate(version: version, current: current, ctx: ctx);
+      return await _migrate(version: target, current: current, ctx: ctx, comment: comment);
     } finally {
       try {
         await _retry(() => releaseLock());
@@ -494,7 +512,7 @@ mixin Migratable {
     try {
       targVer = Version.parse(version);
     } catch (e) {
-      throw MigrationInvalidVersionError(message: 'Invalid target version "$targVer": $e');
+      throw MigrationInvalidVersionError(message: 'Invalid target version "$version": $e');
     }
 
     final direction = MigrationDirection.fromVersions(currVer, targVer);
@@ -502,24 +520,27 @@ mixin Migratable {
 
     // region Extract all files to be processed, in the correct order
     late final Map<String, List<({String name, String checksum})>> files;
+    final skipped = <String>[];
 
     if (currVer == null || currVer < targVer) {
       // Upgrade database
-      files = await queryMigrationFiles(version, current: current, direction: MigrationDirection.up);
+      files = await queryMigrationFiles(version, current: current, direction: MigrationDirection.up, skipped: skipped);
     } else if (currVer > targVer) {
       // Downgrade database
-      files = await queryMigrationFiles(version, current: current, direction: MigrationDirection.down);
+      files = await queryMigrationFiles(
+        version,
+        current: current,
+        direction: MigrationDirection.down,
+        skipped: skipped,
+      );
     } else {
       // region If checksums are enabled, validate file checksums against the database
       if (migrationOptions.checksums) {
         // Query the list of migration files that belong to the target version
-        final files = await queryMigrationFiles(
-          version,
-          current: (version: minVersion, checksum: ''),
-          direction: MigrationDirection.up,
-        );
-        if (files.isNotEmpty) {
-          final checksum = files[files.keys.last]!.checksum();
+        final files = await queryMigrationFiles(version, current: (version: '', checksum: ''));
+        final targetFiles = files[targVer.toString()];
+        if (targetFiles != null) {
+          final checksum = targetFiles.checksum();
           if (current!.checksum != checksum) {
             throw MigrationChecksumMismatchError(
               message: 'Migration version checksum failed',
@@ -534,14 +555,17 @@ mixin Migratable {
       files = {};
     }
 
-    final path = Directory(migrationOptions.path).path.split('/').last;
+    final path = p.basename(Directory(migrationOptions.path).path);
     final started = DateTime.now();
+    final skippedNote = skipped.isEmpty
+        ? ''
+        : ' Skipped ${skipped.length} item(s) with invalid semantic version: ${skipped.join(', ')}.';
     if (files.isEmpty) {
       return (
         direction: direction,
         fromVersion: currVer?.toString() ?? '',
         toVersion: targVer.toString(),
-        message: 'No migration files found to process',
+        message: 'No migration files found to process.$skippedNote',
         started: started,
         completed: DateTime.now(),
         path: path,
@@ -553,20 +577,21 @@ mixin Migratable {
 
     final executed = <({String name, String checksum})>[];
 
-    String lastVersion = '';
-    String lastChecksum = '';
+    // The checksum of the target version's (up) files
+    var targetChecksum = '';
+    if (migrationOptions.checksums) {
+      final upFiles = await queryMigrationFiles(version, current: (version: '', checksum: ''));
+      targetChecksum = upFiles[targVer.toString()]?.checksum() ?? '';
+    }
     late final MigrationResult result;
 
-    await transaction((ctx) async {
+    Future<void> run(dynamic ctx) async {
       for (final version in files.keys) {
-        lastChecksum = files[version]!.checksum();
-
         for (var file in files[version]!) {
           if (migrationOptions.directoryBased) file = (name: '$version/${file.name}', checksum: file.checksum);
           try {
             await _processFile(file.name, ctx: ctx);
             executed.add(file);
-            lastVersion = version;
           } catch (e) {
             throw MigrationError(message: e.toString(), failedFile: file.name);
           }
@@ -577,20 +602,46 @@ mixin Migratable {
       result = (
         direction: MigrationDirection.fromVersions(currVer, targVer),
         fromVersion: currVer?.toString() ?? '',
-        toVersion: lastVersion,
+        toVersion: targVer.toString(),
         started: started,
         completed: completed,
-        message: 'Migrated from $currVer ➡ $targVer in ${completed.difference(started).inSeconds} seconds.',
+        message:
+            'Migrated from ${currVer ?? ''} ➡ $targVer in ${completed.difference(started).inSeconds} seconds.$skippedNote',
         path: path,
         files: executed,
-        checksum: migrationOptions.checksums ? lastChecksum : '',
+        checksum: targetChecksum,
       );
 
       // Save the new version to the migration history table
       await saveVersion(result: result, ctx: ctx, comment: comment);
-    });
+    }
+
+    // Use the caller's context when provided, otherwise open a new transaction
+    if (ctx != null) {
+      await run(ctx);
+    } else {
+      await transaction(run);
+    }
 
     return result;
+  }
+
+  /// Whether a file's `dir` group (`up`/`down`) is wanted for the given [direction].
+  /// With [listAll] any valid direction matches.
+  static bool _matchesDirection(String? dir, MigrationDirection direction, bool listAll) {
+    if (dir == null) return false;
+    final code = MigrationDirection.fromCode(dir);
+    if (listAll) return code != MigrationDirection.none;
+    return code == direction;
+  }
+
+  static bool _looksLikeVersion(String s) => RegExp(r'^v?\d').hasMatch(s);
+
+  /// SHA-256 of the file's content, ignoring BOM and line-ending differences.
+  Future<String> _fileChecksum(File f) async {
+    var text = utf8.decode(await f.readAsBytes(), allowMalformed: true).replaceAll('\r\n', '\n');
+    if (text.startsWith('\uFEFF')) text = text.substring(1);
+    return sha256.convert(utf8.encode(text)).toString();
   }
 
   /// Processes (executes all statements in) a migration file within the context
@@ -606,6 +657,7 @@ mixin Migratable {
   Future<void> _processFile(String file, {dynamic ctx}) async {
     final path = '${migrationOptions.path}/$file';
     final content = await File(path).readAsString(encoding: migrationOptions.encoding);
+    if (content.trim().isEmpty) return;
 
     await _retry(() async => await execute(content, ctx: ctx));
   }
@@ -679,12 +731,13 @@ class MigrationOptions {
     this.encoding = utf8,
     String? lockKey,
   }) : lockKey = lockKey ?? 'migration:${schema.isNotEmpty ? '$schema.$versionTable' : versionTable}',
+       assert(retries >= 1, 'retries must be at least 1'),
        assert(
-         filesPattern == null || directoryBased || filesPattern.pattern.contains('(?<version>[^_]+)'),
+         filesPattern == null || directoryBased || RegExp(r'\(\?<version>').hasMatch(filesPattern.pattern),
          'filesPattern, when in file-based versioning mode, must contain a <version> variable in the regex pattern',
        ),
        assert(
-         filesPattern == null || filesPattern.pattern.contains('(?<dir>up|down)'),
+         filesPattern == null || RegExp(r'\(\?<dir>').hasMatch(filesPattern.pattern),
          'filesPattern must contain a <dir> variable in the regex pattern matching either "up" or "down"',
        );
 
@@ -746,7 +799,9 @@ class MigrationOptions {
   RegExp get regex =>
       filesPattern ??
       RegExp(
-        directoryBased ? r'([^.]+\.)?(?<dir>up|down)\.sql' : r'(?<version>[^_]+)([_\-][^.]+)?\.(?<dir>up|down)\.sql',
+        directoryBased
+            ? r'^([^.]+\.)?(?<dir>up|down)\.sql$'
+            : r'^(?<version>[^_]+)([_\-][^.]+)?\.(?<dir>up|down)\.sql$',
         caseSensitive: false,
       );
 
@@ -771,6 +826,7 @@ class MigrationOptions {
     Duration? timeout,
     bool? checksums,
     Encoding? encoding,
+    String? lockKey,
   }) {
     return MigrationOptions(
       path: path ?? this.path,
@@ -783,7 +839,45 @@ class MigrationOptions {
       timeout: timeout ?? this.timeout,
       checksums: checksums ?? this.checksums,
       encoding: encoding ?? this.encoding,
+      lockKey: lockKey ?? this.lockKey,
     );
+  }
+}
+
+extension MigrationFilesMapExtensions on Map<String, List<({String name, String checksum})>> {
+  /// Resolves the migration target against the existing versions (the map keys).
+  ///
+  /// Returns [version] if it exists, or the newest existing version if [latest] is `true`.
+  ///
+  /// Throws [MigrationInvalidVersionError] if both or neither of [version] and [latest] are given,
+  /// if [version] is not a valid semantic version, or if the target doesn't exist.
+  String resolveTarget(String version, {bool latest = false}) {
+    if (latest && version.isNotEmpty) {
+      throw MigrationInvalidVersionError(message: 'Provide either a target version or latest: true, not both.');
+    }
+    if (!latest && version.isEmpty) {
+      throw MigrationInvalidVersionError(message: 'Target version "$version" has not a valid version format.');
+    }
+
+    final existing = keys.map(Version.parse).toList()..sort();
+    if (latest) {
+      if (existing.isEmpty) throw MigrationInvalidVersionError(message: 'No migration versions found.');
+      return existing.last.toString();
+    }
+
+    final Version parsed;
+    try {
+      parsed = Version.parse(version);
+    } catch (e) {
+      throw MigrationInvalidVersionError(message: 'Invalid target version "$version": $e');
+    }
+    if (!existing.contains(parsed)) {
+      throw MigrationInvalidVersionError(
+        message:
+            'Target version "$version" not found. Available versions: ${existing.isEmpty ? 'none' : existing.join(', ')}.',
+      );
+    }
+    return version;
   }
 }
 
@@ -793,12 +887,44 @@ extension NameChecksumListExtensions on List<({String name, String checksum})> {
     // If the list contains only one file, return the file's checksum
     if (length == 1) return first.checksum;
 
-    final bytes = utf8.encode(map((e) => e.name).join('\n'));
+    // Combine both the names and the content checksums of all files
+    final bytes = utf8.encode(map((e) => '${e.name}:${e.checksum}').join('\n'));
     return sha256.convert(bytes).toString();
   }
 
   /// Returns a list with all the names found in the list of name/checksum records.
   List<String> names() => map((v) => v.name).toList();
+}
+
+/// Compares two strings in natural order: digit runs are compared numerically
+/// (`2_x` < `10_x`) and everything else case-insensitively (`a_` < `b_`).
+int naturalCompare(String a, String b) {
+  // Splits a string into tokens: either a whole run of digits, or a single non-digit character
+  final re = RegExp(r'\d+|\D');
+
+  // Tokens of the first string (lower-cased, so letters compare case-insensitively)
+  final x = re.allMatches(a.toLowerCase()).map((m) => m[0]!).toList();
+
+  // Tokens of the second string (lower-cased)
+  final y = re.allMatches(b.toLowerCase()).map((m) => m[0]!).toList();
+
+  // Whether a token is a digit run (its first character is a digit '0'-'9')
+  bool isNum(String s) => s.codeUnitAt(0) >= 48 && s.codeUnitAt(0) <= 57;
+
+  // Compare token by token, up to the length of the shorter token list
+  for (var i = 0; i < x.length && i < y.length; i++) {
+    // Comparison result of the current token pair: numeric if both are digit runs
+    // (BigInt avoids overflow on long runs), otherwise plain string comparison
+    final c = (isNum(x[i]) && isNum(y[i])) ? BigInt.parse(x[i]).compareTo(BigInt.parse(y[i])) : x[i].compareTo(y[i]);
+    // The first differing token decides the order
+    if (c != 0) return c;
+  }
+
+  // All shared tokens are equal: the string with fewer tokens sorts first
+  final c = x.length.compareTo(y.length);
+
+  // If still equal, fall back to the original strings to keep the order deterministic (e.g. case differences)
+  return c != 0 ? c : a.compareTo(b);
 }
 
 class MigrationError extends Error {
