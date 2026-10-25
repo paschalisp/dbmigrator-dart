@@ -470,6 +470,77 @@ void main() {
     });
   });
 
+  group('Pre-release (2.0.0-rc1) upgrade/downgrade paths', () {
+    for (final directoryBased in [false, true]) {
+      final mode = directoryBased ? 'directory-based' : 'file-based';
+      final options = MigrationOptions(
+        path: './test/migrations/${directoryBased ? 'dir-based' : 'file-based'}',
+        directoryBased: directoryBased,
+        checksums: false,
+      );
+      String f(String version, String dir) =>
+          directoryBased ? '$version/$dir.sql' : '$version${version == '2.0.0-rc1' || version == '2.0.0' ? '' : '_test'}.$dir.sql';
+
+      DummyDb dbAt(String version) => DummyDb(currentVersion: version, migrationOptions: options);
+
+      test('[$mode] 1.2.0 -> 2.0.0 runs rc1 first, then the release', () async {
+        final res = await dbAt('1.2.0').migrate(version: '2.0.0');
+        expect(res.direction, MigrationDirection.up);
+        expect(res.files.names(), [f('2.0.0-rc1', 'up'), f('2.0.0', 'up')]);
+        expect(res.toVersion, '2.0.0');
+      });
+
+      test('[$mode] 1.2.0 -> 2.0.0-rc1 stops at the release candidate', () async {
+        final res = await dbAt('1.2.0').migrate(version: '2.0.0-rc1');
+        expect(res.direction, MigrationDirection.up);
+        expect(res.files.names(), [f('2.0.0-rc1', 'up')]);
+        expect(res.toVersion, '2.0.0-rc1');
+      });
+
+      test('[$mode] 2.0.0-rc1 -> 2.0.0 runs only the release files', () async {
+        final res = await dbAt('2.0.0-rc1').migrate(version: '2.0.0');
+        expect(res.direction, MigrationDirection.up);
+        expect(res.files.names(), [f('2.0.0', 'up')]);
+      });
+
+      test('[$mode] 2.0.0-rc1 -> latest runs only the release files', () async {
+        final res = await dbAt('2.0.0-rc1').migrate(latest: true);
+        expect(res.files.names(), [f('2.0.0', 'up')]);
+        expect(res.toVersion, '2.0.0');
+      });
+
+      test('[$mode] 2.0.0 -> 2.0.0-rc1 reverts only the release', () async {
+        final res = await dbAt('2.0.0').migrate(version: '2.0.0-rc1');
+        expect(res.direction, MigrationDirection.down);
+        expect(res.files.names(), [f('2.0.0', 'down')]);
+        expect(res.toVersion, '2.0.0-rc1');
+      });
+
+      test('[$mode] 2.0.0 -> 1.2.0 reverts the release, then the rc1', () async {
+        final res = await dbAt('2.0.0').migrate(version: '1.2.0');
+        expect(res.direction, MigrationDirection.down);
+        expect(res.files.names(), [f('2.0.0', 'down'), f('2.0.0-rc1', 'down')]);
+      });
+
+      test('[$mode] 2.0.0-rc1 -> 1.2.0 reverts only the rc1', () async {
+        final res = await dbAt('2.0.0-rc1').migrate(version: '1.2.0');
+        expect(res.direction, MigrationDirection.down);
+        expect(res.files.names(), [f('2.0.0-rc1', 'down')]);
+      });
+
+      test('[$mode] migrating to the current pre-release version does nothing', () async {
+        final res = await dbAt('2.0.0-rc1').migrate(version: '2.0.0-rc1');
+        expect(res.direction, MigrationDirection.none);
+        expect(res.files, isEmpty);
+      });
+
+      test('[$mode] version ordering follows semver precedence', () async {
+        final res = await dbAt('1.0.0').queryMigrationFiles('2.0.0', current: (version: '1.0.0', checksum: ''));
+        expect(res.keys.map((v) => v.toString()).toList(), ['1.1.0', '1.1.1', '1.2.0', '2.0.0-rc1', '2.0.0']);
+      });
+    }
+  });
+
   group('natural version sorting checks', () {
     test('identical strings are equal', () {
       expect(naturalCompare('1_init.up.sql', '1_init.up.sql'), 0);
